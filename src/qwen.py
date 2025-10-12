@@ -94,9 +94,11 @@ def init_model():
     project_dir = current_dir.parent
     data_dir = project_dir / "models"
     llama_3b = data_dir / "llama3.2_3B/"
+    qwen_4b = data_dir / "qwen3-4b/"
 
 
     LLAMA_3_CHAT_TEMPLATE = """{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"""
+    QWEN_3_CHAT_TEMPLATE = """{% set loop_messages = messages -%} {% for message in loop_messages -%} {{ '<|im_start|>' + message['role'] + '\n' + message['content'] | trim + '<|im_end|>' }} {% endfor -%} {% if add_generation_prompt -%} {{ '<|im_start|>assistant\n' }} {% endif -%}"""
 
     compute_dtype = getattr(torch, "float16")
 
@@ -107,7 +109,7 @@ def init_model():
         bnb_4bit_compute_dtype=compute_dtype,  
     )
 
-    model_id = llama_3b
+    model_id = qwen_4b
 
     time_start = time()
     print("Loading model")
@@ -123,12 +125,20 @@ def init_model():
     )
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    tokenizer.chat_template = LLAMA_3_CHAT_TEMPLATE 
+    #tokenizer.chat_template = LLAMA_3_CHAT_TEMPLATE 
+    tokenizer.chat_template = QWEN_3_CHAT_TEMPLATE
+
+    if tokenizer.eos_token_id is None:
+        tokenizer.eos_token = "<|im_end|>"
+    
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
 
     time_end = time()
     print(f"Prepare model, tokenizer: {round(time_end-time_start, 3)} sec.")
 
-    system_prompt = '''You are a puzzle solving wizard. You are given a puzzle from the abstraction and reasoning corpus developed by Francois Chollet.'''
+    system_prompt = '''You are a puzzle solving wizard. You are given a puzzle from the abstraction and reasoning corpus developed by Francois Chollet. These puzzles consist of 2D grids of numbers inside brackets '[[]]' and you need to solve these puzzles! To solve those puzzles, focus on the hidden rule which transforms a grid of numbers into a new grid of numbers. Try to get an understanding from the examples! '''
 
    
     user_message_template = '''Here are the example input and output pairs from which you should learn the underlying rule to later predict the output for the given test input:
@@ -179,15 +189,14 @@ def create_dataset(df, tokenizer,system_prompt, user_message_template, test_run=
     dataset = Dataset.from_pandas(df)
     dataset = dataset.map(lambda x: preprocess(task=x, tokenizer=tokenizer,system_prompt=system_prompt, user_message_template= user_message_template, test_run= test_run), batched=False, remove_columns=dataset.column_names)
 
-    dataset = dataset.select([11, 169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 0, 257, 388, 394, 201, 385, 43, 189, 3, 105, 103, 188, 376, 357, 276, 383, 354, 275, 233])
-    #,
+    dataset = dataset.select([11, 169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 0, 257, 388, 394, 201, 385, 43, 189, 3, 105, 103, 188, 376, 357, 276, 383, 354, 275, 233, 68, 250, 254, 172])
     return dataset
 
 def count_tokens(text, tokenizer):
     return len(tokenizer.encode(text))
 
 def filter_dataset(dataset, tokenizer):
-    max_tokens = 8000
+    max_tokens = 80000
     filtered_dataset = dataset.filter(lambda x: count_tokens(x['text'], tokenizer=tokenizer) <= max_tokens)
 
     # Print the number of tasks filtered out and the remaining tasks
@@ -198,20 +207,39 @@ def filter_dataset(dataset, tokenizer):
     
     return filtered_dataset
 
-def create_pipline(model, tokenizer):
+# def create_pipeline(model, tokenizer):
+#     text_gen_pipeline = pipeline(
+#         "text-generation",
+#         model=model,
+#         tokenizer=tokenizer,
+#         torch_dtype=torch.float16,
+#         device_map= {"":0}
+#     )
+#     text_gen_pipeline.tokenizer.pad_token_id = text_gen_pipeline.model.config.eos_token_id
+
+#     # Define terminators for the pipeline
+#     terminators = [
+#         text_gen_pipeline.tokenizer.eos_token_id,
+#         text_gen_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+#     ]
+
+#     return text_gen_pipeline, terminators
+
+def create_pipeline(model, tokenizer):
     text_gen_pipeline = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
         torch_dtype=torch.float16,
-        device_map= {"":0}
+        device_map={"": 0}
     )
-    text_gen_pipeline.tokenizer.pad_token_id = text_gen_pipeline.model.config.eos_token_id
 
-    # Define terminators for the pipeline
+    if text_gen_pipeline.tokenizer.pad_token_id is None:
+        text_gen_pipeline.tokenizer.pad_token = text_gen_pipeline.eos_token or "<|im_end|>"
+
     terminators = [
         text_gen_pipeline.tokenizer.eos_token_id,
-        text_gen_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        text_gen_pipeline.tokenizer.convert_tokens_to_ids("<|im_end|>")
     ]
 
     return text_gen_pipeline, terminators
@@ -281,7 +309,7 @@ def compare_solutions_with_padding(generated_output, correct_output, pad_value=-
     
     return is_correct, correct_percentage
 
-def generate_solutions_passk(task, text_gen_pipeline, terminators, k=240, max_new_tokens=512, do_sample=True, temperature=0.7, top_p=0.9, start_idx=0):
+def generate_solutions_passk(task, text_gen_pipeline, terminators, k=240, max_new_tokens=512, do_sample=True, temperature=1, top_p=0.99, start_idx=0):
 
     #tasks = [dict(zip(tasks.keys(), values)) for values in zip(*tasks.values())]
     prompt = task['text']
@@ -367,9 +395,9 @@ def evaluate_passk_solutions(task, test_run=True, k=240):
         'best_accuracy': best_accuracy,
         'best_solution_idx': best_solution_idx,
         'best_solution': best_solution,
-        'all_solutions': solution_results,
-        'k': len(solution_results)
-
+        'k': len(solution_results),
+        'all_solutions': solution_results
+        
     }
 
 def run_passk_evaluation(filtered_dataset, text_gen_pipeline, terminators,  k=240, k_run=10, test_run=True):
@@ -453,7 +481,7 @@ def analyze_passk_results(evaluation_results, k, test_run=True):
     if helped_tasks:
         print(f"\nTasks where pass@{k} helped (solution wasn't the first attempt): {len(helped_tasks)}")
         print("Examples:")
-        for i, task in enumerate(helped_tasks[:5]):  # Show first 5 examples
+        for i, task in enumerate(helped_tasks[:5]):  
             print(f"  {task['file_name']}: Best solution was attempt #{task['best_solution_idx']}")
 
 def output_csv(evaluation_results):
@@ -467,16 +495,16 @@ def output_csv(evaluation_results):
 
     if not df_eval.empty:
         df_eval['best_solution'] = df_eval['best_solution'].apply(repr)
-        df_eval.to_csv(f"output/{timestamp}.csv", index=False)
+        df_eval.to_csv(f"output_qwen/{timestamp}.csv", index=False)
 
 def run():
-    k = 750
+    k = 360
     df = create_data_frame(test_run=True)
     model, tokenizer, system_prompt, user_message_template = init_model()
     dataset = create_dataset(df=df,tokenizer=tokenizer,system_prompt=system_prompt,user_message_template=user_message_template, test_run=True)
     fdataset = filter_dataset(dataset=dataset, tokenizer=tokenizer)
-    text_gen_pipeline, terminators = create_pipline(model=model, tokenizer=tokenizer)
-    evaluation_results, dataset_with_solutions = run_passk_evaluation(filtered_dataset=fdataset,k=k, text_gen_pipeline=text_gen_pipeline, terminators=terminators, k_run= 10,test_run=True)
+    text_gen_pipeline, terminators = create_pipeline(model=model, tokenizer=tokenizer)
+    evaluation_results, dataset_with_solutions = run_passk_evaluation(filtered_dataset=fdataset,k=k, text_gen_pipeline=text_gen_pipeline, terminators=terminators, k_run= 4,test_run=True)
     output_csv(evaluation_results=evaluation_results)
 
 def main():
