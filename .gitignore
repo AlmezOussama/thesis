@@ -2,3 +2,6 @@ models/
 data/
 solution.json
 output/
+llama_plots/
+output_qwen/
+qwen_plots/
