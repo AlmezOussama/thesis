@@ -1,46 +1,53 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
-df = pd.read_csv("output_qwen/p099.csv")
+def plot_results(csv_path=None):
+    # === Setup paths ===
+    output_dir = Path(__file__).resolve().parent / "output"
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
-def avg_plot(df):
-    df['timestep'] = df.groupby('file_name').cumcount() 
-    avg_df = df.groupby('timestep', as_index=False)['best_accuracy'].mean() # Plot 
-    plt.figure(figsize=(12,5)) 
+    if csv_path is None:
+        csv_files = sorted(output_dir.glob("evaluation_results_*.csv"))
+        if not csv_files:
+            print("No evaluation CSV found in output folder.")
+            return
+        csv_path = csv_files[-1]  
+    print(f"Loading results from {csv_path}")
+    df = pd.read_csv(csv_path)
 
-    plt.plot(avg_df['timestep'], avg_df['best_accuracy'], linewidth=2, color="tab:blue") 
-    plt.xlabel("Timestep", fontsize=12) 
-    plt.ylabel("Average Best Accuracy", fontsize=12) 
-    plt.title("Average Best Accuracy over Timesteps", fontsize=14) 
-    plt.grid(True, linestyle="--", alpha=0.6) 
-    plt.savefig("qwen_plots/360k_temp0.9_average.png", dpi=300, bbox_inches="tight")
+    plt.figure(figsize=(10, 6))
+    for task_name, group in df.groupby("file_name"):
+        plt.plot(group["sample_id"], group["cell_accuracy"], marker="o", label=task_name)
 
-    plt.savefig("qwen_plots/360k09p099_avg.png", dpi=300, bbox_inches="tight")
+    plt.title("Cell Accuracy per Task over Samples")
+    plt.xlabel("Sample ID (generation step)")
+    plt.ylabel("Cell Accuracy (%)")
+    plt.legend(fontsize="small", loc="lower right", ncol=2)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
 
-def nm_plot(df):
-    df['timestep'] = df.groupby('file_name').cumcount()
+    task_plot_path = plots_dir / "accuracy_per_task.png"
+    plt.savefig(task_plot_path)
+    plt.close()
+    print(f"Saved plot: {task_plot_path}")
 
-    # Plot each file separately on the same figure
-    plt.figure(figsize=(12,5))
+    avg_accuracy = df.groupby("sample_id")["cell_accuracy"].mean()
 
-    for file_name, group in df.groupby('file_name'):
-        plt.plot(group['timestep'], 
-                group['best_accuracy'], 
-                linewidth=2, 
-                label=file_name)  # no marker
+    plt.figure(figsize=(8, 5))
+    plt.plot(avg_accuracy.index, avg_accuracy.values, marker="o", color="tab:blue")
+    plt.title("Average Accuracy over All Tasks per Sample Step")
+    plt.xlabel("Sample ID (generation step)")
+    plt.ylabel("Average Cell Accuracy (%)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
 
-    plt.xlabel("Timestep", fontsize=12)
-    plt.ylabel("Best Accuracy", fontsize=12)
-    plt.title("Best Accuracy over Timesteps for Each File", fontsize=14)
-    plt.legend(title="File Name", fontsize=10)
-    plt.grid(True, linestyle="--", alpha=0.6)
+    avg_plot_path = plots_dir / "average_accuracy_over_time.png"
+    plt.savefig(avg_plot_path)
+    plt.close()
+    print(f"Saved plot: {avg_plot_path}")
 
-    plt.savefig("qwen_plots/360k_temp0.9p099_individual.png", dpi=300, bbox_inches="tight")
-    plt.show()
-
-def main():
-    df = pd.read_csv("output_qwen/p099.csv")
-    nm_plot(df)
 
 if __name__ == "__main__":
-    main()
+    plot_results()
