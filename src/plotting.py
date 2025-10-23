@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 def plot_results(csv_path=None):
-    # === Setup paths ===
     output_dir = Path(__file__).resolve().parent / "output"
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)

@@ -67,7 +67,7 @@ def create_data_frame(test_run=True):
 
 
 ######## LLM ########
-def init_llm(model_subdir="qwen4b_awq"):
+def init_llm(model_subdir="qwen3_4b_thinking"):
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent
     model_dir = project_root / "models" / model_subdir
@@ -76,7 +76,7 @@ def init_llm(model_subdir="qwen4b_awq"):
     if torch.cuda.is_available():
         print("Device:", torch.cuda.get_device_name(0))
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     llm = LLM(
         model=str(model_dir),
@@ -88,7 +88,7 @@ def init_llm(model_subdir="qwen4b_awq"):
         n=4,
         temperature=0.9,
         top_p=0.95,
-        max_tokens=2048,
+        max_tokens=4096,
     )
 
     return llm, sampling_params
@@ -188,7 +188,7 @@ def grids_match(predicted, target, pad_value=0):
 
 
 ######## Inference ########
-def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=8):
+def run(df, llm, sampling_params, max_tasks=None, total_samples=4, batch_size=4):
     system_prompt = (
         "You are a puzzle solving wizard. You are given a puzzle from the "
         "Abstraction and Reasoning Corpus developed by François Chollet. "
@@ -208,7 +208,8 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=
         "----------------------------------------\n"
         "[{{'input': {input_test_data}, 'output': [[]]}}]\n"
         "----------------------------------------\n"
-        "What is the output grid? Please explain your reasoning step by step, then provide the final output grid in the shown format."
+        "Think step by step about how to solve the puzzle. Describe your reasoning, "
+        "and finally output the resulting grid in the format discussed."
     )
 
     tasks_to_run = df if max_tasks is None else df.head(max_tasks)
@@ -241,27 +242,38 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=
                 max_tokens=sampling_params.max_tokens,
             )
             outputs = llm.generate([prompt], batch_params)
+
             for sample in outputs[0].outputs:
                 text = sample.text.strip()
                 grid = extract_final_grid(text)
-                task_predictions.append(grid)
+                task_predictions.append({
+                    "raw_output": text,
+                    "grid": grid
+                })
 
         all_results[file_name] = task_predictions
-
         evaluation_results[file_name] = []
+
+        # Evaluation
         for pred in task_predictions:
-            is_match, acc = grid_accuracy(pred, true_grid)
+            is_match, acc = grid_accuracy(pred["grid"], true_grid)
             evaluation_results[file_name].append({
-                "predicted_grid": pred,
+                "predicted_grid": pred["grid"],
+                "raw_output": pred["raw_output"],
                 "match": is_match,
                 "cell_accuracy": acc
             })
 
+        # --- Printing results ---
         print(f"\n=== Task: {file_name} ===")
         print(f"Ground truth:\n{true_grid}\n")
+
         for i, res in enumerate(evaluation_results[file_name]):
             print(f"[Sample {i+1}] Match={res['match']}, Accuracy={res['cell_accuracy']:.2f}")
-            print(res['predicted_grid'])
+            print("\n--- Raw model output ---")
+            print(res["raw_output"])
+            print("\n--- Extracted grid ---")
+            print(res["predicted_grid"])
             print("------")
 
     return all_results, evaluation_results
@@ -270,7 +282,8 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=
 ######## Main ########
 def main():
     df = create_data_frame(test_run=True)
-    df = df.iloc[[0, 11, 169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 257, 388, 394, 201, 385, 43, 189, 3]]
+    df = df.iloc[[0]]
+    #, 11,169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 257, 388, 394, 201, 385, 43, 189, 3
     llm, sampling_params = init_llm()
     all_results, evaluation_results = run(df, llm, sampling_params, max_tasks=len(df))
 
