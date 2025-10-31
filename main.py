@@ -4,9 +4,9 @@ import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def main():
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
-    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
-    save_dir = "models/qwen3_4b_thinking"
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507-FP8")
+    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B-Thinking-2507-FP8")
+    save_dir = "models/q3_think_f8"
 
     # Save both
     model.save_pretrained(save_dir)
