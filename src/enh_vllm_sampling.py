@@ -77,13 +77,13 @@ def init_llm(model_subdir="q3_think_f8"):
     if torch.cuda.is_available():
         print("Device:", torch.cuda.get_device_name(0))
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     llm = LLM(
         model=str(model_dir),
         tensor_parallel_size=1,
-        gpu_memory_utilization=0.85,
-        max_model_len=80000,
+        gpu_memory_utilization=0.9,
+        max_model_len=100000,
         enforce_eager=True,
     )
 
@@ -163,7 +163,7 @@ def grid_accuracy(generated_output, correct_output, pad_value=0):
 
 
 ######## Inference ########
-def run(df, llm, sampling_params, max_tasks=None, total_samples=8, batch_size=4):
+def run(df, llm, sampling_params, max_tasks=None, total_samples=100, batch_size=10):
     system_prompt = (
         "You are a puzzle solving wizard. You are given a puzzle from the "
         "Abstraction and Reasoning Corpus developed by François Chollet. "
@@ -195,22 +195,28 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=8, batch_size=4)
             input_test_data=input_test_data
         )
 
-        # --- Build proper chat format for Qwen ---
-        chat = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
         prompt = (
             f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
             f"<|im_start|>user\n{user_message}<|im_end|>\n"
             f"<|im_start|>assistant\n"
         )
+
         task_predictions = []
 
+        # Compute how many batches we need
         num_batches = (total_samples + batch_size - 1) // batch_size
+
         for b in range(num_batches):
-            print(f"Generating batch {b+1}/{num_batches} for {file_name}...")
-            outputs = llm.generate([prompt], sampling_params)
+            current_batch_size = min(batch_size, total_samples - len(task_predictions))
+            batch_params = SamplingParams(
+                n=current_batch_size,
+                temperature=sampling_params.temperature,
+                top_p=sampling_params.top_p,
+                max_tokens=sampling_params.max_tokens,
+            )
+
+            print(f"Generating batch {b+1}/{num_batches} ({current_batch_size} samples) for {file_name}...")
+            outputs = llm.generate([prompt], batch_params)
 
             for sample in outputs[0].outputs:
                 text = sample.text.strip()
@@ -234,10 +240,9 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=8, batch_size=4)
                 "cell_accuracy": acc
             })
 
-        # Print sample summary
+        # Print summary
         print(f"\n=== Task: {file_name} ===")
         print(f"Ground truth:\n{true_grid}\n")
-
         for i, res in enumerate(evaluation_results[file_name]):
             print(f"[Sample {i+1}] Match={res['match']}, Accuracy={res['cell_accuracy']:.2f}")
             print("--- Raw output ---")
@@ -247,6 +252,7 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=8, batch_size=4)
             print("------")
 
     return all_results, evaluation_results
+
 
 
 ######## Main ########
