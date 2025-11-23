@@ -89,7 +89,7 @@ def init_llm(model_subdir="q3_think_f8"):
 
     sampling_params = SamplingParams(
         n=1,
-        temperature=0.9,
+        temperature=1.1,
         top_p=0.95,
         max_tokens=8192,
     )
@@ -163,7 +163,7 @@ def grid_accuracy(generated_output, correct_output, pad_value=0):
 
 
 ######## Inference ########
-def run(df, llm, sampling_params, max_tasks=None, total_samples=100, batch_size=10):
+def run(df, llm, sampling_params, max_tasks=None, total_samples=200, batch_size=20):
     system_prompt = (
         "You are a puzzle solving wizard. You are given a puzzle from the "
         "Abstraction and Reasoning Corpus developed by François Chollet. "
@@ -279,14 +279,14 @@ def main():
                 "ground_truth": res["ground_truth"],
                 "predicted_grid": res["predicted_grid"],
                 "match": res["match"],
-                "cell_accuracy": res["cell_accuracy"],
-                "raw_output": res["raw_output"]
+                "cell_accuracy": res["cell_accuracy"]
             })
+
 
     df_csv = pd.DataFrame(csv_rows)
     csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
     df_csv.to_csv(csv_path, index=False)
-    print(f"✅ Saved CSV to {csv_path}")
+    print(f"Saved CSV to {csv_path}")
 
     del llm
     torch.cuda.empty_cache()
