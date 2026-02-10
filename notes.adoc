@@ -1,0 +1,194 @@
+Work Feb 2:
+    Berman Code
+        - Padded value changed from 0 to -1, so solutions do not get inflated Accuracy
+        - gen_instr_params increased from 500 to 2048, temp lowered to 0.9
+        - gen_py_params increased from 500 to 2048
+        * current run: n_init=30, top_k=10, indv revs = 5, pool revs= 5, py_n=15, py revs=10
+
+Feb 7    
+    Bermann:
+        MODEL_SUBDIR = "q3_think_f8"
+    CUDA_VISIBLE = "0"
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.85,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=5,
+            n_pool_revisions=5,
+            py_n_candidates=20,
+            py_revision_steps=5,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=5,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=5.0,
+            python_test_timeout_s=10.0,
+        ),
+        pad_value=-1,
+    )
+
+    qwen 8b vl thinking fp8:
+            total_samples=102
+            max_model_len=80000,
+            temperature=1.2,
+            top_p=0.95,
+            max_tokens=8192,
+
+    berman english:
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=10,
+            n_pool_revisions=10,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=10,
+        ),
+        pad_value=-1,
+
+Berman eng to py:
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=6000,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=10,
+            top_k=5,
+            n_individual_revisions=3,
+            n_pool_revisions=3,
+            py_n_candidates=10,
+            py_revision_steps=3,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=10,
+            mini_batch_revisions=3,
+            mini_batch_py=10,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=5.0,
+            python_test_timeout_s=8.0,
+        ),
+        pad_value=-1,
+    )
+
+    

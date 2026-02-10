@@ -2,15 +2,22 @@ import pandas as pd
 import numpy as np
 import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoProcessor, AutoModelForImageTextToText
+
+
+
+from huggingface_hub import snapshot_download
+from pathlib import Path
 
 def main():
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507-FP8")
-    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B-Thinking-2507-FP8")
-    save_dir = "models/q3_think_f8"
+    save_dir = Path("models/qwen_8b")
+    save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save both
-    model.save_pretrained(save_dir)
-    tokenizer.save_pretrained(save_dir)
+    snapshot_download(
+        repo_id="Qwen/Qwen3-VL-8B-Thinking-FP8",
+        local_dir=str(save_dir),
+        local_dir_use_symlinks=False,
+    )
 
 if __name__ == "__main__":
     main()

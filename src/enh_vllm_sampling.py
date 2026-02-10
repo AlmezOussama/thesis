@@ -68,7 +68,7 @@ def create_data_frame(test_run=True):
 
 
 ######## LLM ########
-def init_llm(model_subdir="q3_think_f8"):
+def init_llm(model_subdir="parcore"):
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent
     model_dir = project_root / "models" / model_subdir
@@ -82,14 +82,14 @@ def init_llm(model_subdir="q3_think_f8"):
     llm = LLM(
         model=str(model_dir),
         tensor_parallel_size=1,
-        gpu_memory_utilization=0.9,
-        max_model_len=100000,
+        gpu_memory_utilization=0.95,
+        max_model_len=70000,
         enforce_eager=True,
     )
 
     sampling_params = SamplingParams(
         n=1,
-        temperature=1.1,
+        temperature=1.2,
         top_p=0.95,
         max_tokens=8192,
     )
@@ -143,7 +143,7 @@ def pad_array_with_value(array, target_shape, pad_value=0):
     return padded
 
 
-def grid_accuracy(generated_output, correct_output, pad_value=0):
+def grid_accuracy(generated_output, correct_output, pad_value=-1):
     if not generated_output or not correct_output:
         return False, 0.0
 
@@ -163,12 +163,11 @@ def grid_accuracy(generated_output, correct_output, pad_value=0):
 
 
 ######## Inference ########
-def run(df, llm, sampling_params, max_tasks=None, total_samples=200, batch_size=20):
+def run(df, llm, sampling_params, max_tasks=None, total_samples=120, batch_size=4):
     system_prompt = (
         "You are a puzzle solving wizard. You are given a puzzle from the "
         "Abstraction and Reasoning Corpus developed by François Chollet. "
-        "To solve these puzzles, think carefully and reason step by step "
-        "inside <think> tags, and provide your final grid inside <answer> tags."
+        "To solve these puzzles, think and deliver a final grid inside the <answer> ... </answer>  as early as possible! "
     )
 
     user_template = (
@@ -251,17 +250,17 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=200, batch_size=
             print(res["predicted_grid"])
             print("------")
 
-    return all_results, evaluation_results
+    return all_results, evaluation_results, total_samples
 
 
 
 ######## Main ########
 def main():
     df = create_data_frame(test_run=True)
-    df = df.iloc[[0, 11, 169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 257, 388, 394, 201, 385, 43, 189, 3]]
+    df = df.iloc[[0, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309]]
     
     llm, sampling_params = init_llm()
-    all_results, evaluation_results = run(df, llm, sampling_params, max_tasks=len(df))
+    all_results, evaluation_results, k = run(df, llm, sampling_params, max_tasks=len(df))
 
     src_dir = Path(__file__).resolve().parent
     output_dir = src_dir / "output"
@@ -284,7 +283,7 @@ def main():
 
 
     df_csv = pd.DataFrame(csv_rows)
-    csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
+    csv_path = output_dir / f"ev_{sampling_params.temperature}_{sampling_params.top_k}_{k}.csv"
     df_csv.to_csv(csv_path, index=False)
     print(f"Saved CSV to {csv_path}")
 

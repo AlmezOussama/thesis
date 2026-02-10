@@ -9,6 +9,7 @@ import torch
 from datetime import datetime
 import re
 import time
+from transformers import AutoTokenizer
 
 
 ######## Data ########
@@ -67,7 +68,7 @@ def create_data_frame(test_run=True):
 
 
 ######## LLM ########
-def init_llm(model_subdir="qwen4b_awq"):
+def init_llm(model_subdir="q3_think_f8"):
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent
     model_dir = project_root / "models" / model_subdir
@@ -76,78 +77,61 @@ def init_llm(model_subdir="qwen4b_awq"):
     if torch.cuda.is_available():
         print("Device:", torch.cuda.get_device_name(0))
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     llm = LLM(
         model=str(model_dir),
         tensor_parallel_size=1,
-        gpu_memory_utilization=0.9,
+        gpu_memory_utilization=0.95,
+        max_model_len=70000,
+        enforce_eager=True,
     )
 
     sampling_params = SamplingParams(
-        n=4,
-        temperature=0.9,
+        n=1,
+        temperature=1.2,
         top_p=0.95,
-        max_tokens=2048,
+        max_tokens=8192,
     )
 
     return llm, sampling_params
 
 
+
 ######## Helpers ########
-def extract_final_grid(text, input_test_data=None):
+def extract_final_grid(text):
     def is_valid_grid(grid):
         if not isinstance(grid, list) or not all(isinstance(r, list) for r in grid):
             return False
         try:
             for row in grid:
                 for v in row:
-                    if isinstance(v, (int, float)):
-                        continue
-                    # reject ellipsis, strings, None, etc.
-                    return False
+                    if not isinstance(v, (int, float)):
+                        return False
             return True
         except Exception:
             return False
 
-    if input_test_data is not None:
-        pattern = re.escape(f"[{{'input': {input_test_data}, 'output': ") + r"(\[\[.*?\]\])\}\]"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            try:
-                grid = ast.literal_eval(match.group(1))
-                if is_valid_grid(grid):
-                    return grid
-                else:
-                    return [[0]]
-            except Exception:
-                return [[0]]
-
-    keywords = ["final output", "output grid", "output:", "solution:"]
-    for kw in keywords:
-        kw_pattern = re.compile(re.escape(kw) + r".*?(\[\[.*?\]\])", re.IGNORECASE | re.DOTALL)
-        match = kw_pattern.search(text)
-        if match:
-            try:
-                grid = ast.literal_eval(match.group(1))
-                if is_valid_grid(grid):
-                    return grid
-                else:
-                    return [[0]]
-            except Exception:
-                return [[0]]
-
-    matches = re.findall(r"\[\s*\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*\s*\]", text)
-    for match in reversed(matches):
+    match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL | re.IGNORECASE)
+    if match:
+        content = match.group(1).strip()
         try:
-            grid = ast.literal_eval(match)
-            if is_valid_grid(grid):
-                return grid
+            grid_candidate = ast.literal_eval(content)
+            if is_valid_grid(grid_candidate):
+                return grid_candidate
+        except Exception:
+            pass  
+
+    grid_matches = re.findall(r"\[\[.*?\]\]", text, re.DOTALL)
+    for gm in grid_matches[::-1]:
+        try:
+            grid_candidate = ast.literal_eval(gm)
+            if is_valid_grid(grid_candidate):
+                return grid_candidate
         except Exception:
             continue
 
     return [[0]]
-
 
 
 def pad_array_with_value(array, target_shape, pad_value=0):
@@ -159,7 +143,7 @@ def pad_array_with_value(array, target_shape, pad_value=0):
     return padded
 
 
-def grid_accuracy(generated_output, correct_output, pad_value=0):
+def grid_accuracy(generated_output, correct_output, pad_value=-1):
     if not generated_output or not correct_output:
         return False, 0.0
 
@@ -171,51 +155,33 @@ def grid_accuracy(generated_output, correct_output, pad_value=0):
     padded_correct = pad_array_with_value(correct_output, target_shape, pad_value)
 
     total_pixels = max_rows * max_cols
-    correct_pixels = np.sum(
-        (padded_generated == padded_correct) &
-        (padded_generated != pad_value) &
-        (padded_correct != pad_value)
-    )
+    correct_pixels = np.sum(padded_generated == padded_correct)
     correct_percentage = (correct_pixels / total_pixels) * 100
 
     is_correct = (correct_pixels == total_pixels)
     return is_correct, correct_percentage
 
 
-def grids_match(predicted, target, pad_value=0):
-    _, correct_percentage = grid_accuracy(predicted, target, pad_value)
-    return correct_percentage == 100.0
-
-
 ######## Inference ########
-def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=8):
+def run(df, llm, sampling_params, max_tasks=None, total_samples=120, batch_size=8):
     system_prompt = (
         "You are a puzzle solving wizard. You are given a puzzle from the "
         "Abstraction and Reasoning Corpus developed by François Chollet. "
-        "To solve these puzzles, focus on the hidden rule that transforms a "
-        "grid of numbers into a new grid of numbers. Try to infer the rule "
-        "from the given examples!"
+        "To solve these puzzles, think and deliver a final grid inside the <answer> ... </answer>  as early as possible! "
     )
 
-    user_message_template = (
-        "Here are the example input and output pairs from which you should learn "
-        "the underlying rule to later predict the output for the given test input:\n"
-        "----------------------------------------\n"
-        "{training_data}\n"
-        "----------------------------------------\n"
-        "Now, solve the following puzzle based on its input grid by applying the "
-        "rules you have learned from the training data:\n"
-        "----------------------------------------\n"
-        "[{{'input': {input_test_data}, 'output': [[]]}}]\n"
-        "----------------------------------------\n"
-        "What is the output grid? Please explain your reasoning step by step, then provide the final output grid in the shown format."
+    user_template = (
+        "Here are the training examples (input and output pairs):\n"
+        "{training_data}\n\n"
+        "Now, predict the output for this test input:\n"
+        "{input_test_data}\n\n"
+        "Please reason in <think> tags and give the final grid in <answer> tags."
     )
 
     tasks_to_run = df if max_tasks is None else df.head(max_tasks)
     print(f"Running inference on {len(tasks_to_run)} tasks...")
 
-    all_results = {}
-    evaluation_results = {}
+    all_results, evaluation_results = {}, {}
 
     for _, row in tasks_to_run.iterrows():
         training_data = row["train"]
@@ -223,56 +189,78 @@ def run(df, llm, sampling_params, max_tasks=None, total_samples=240, batch_size=
         true_grid = row["test_output"][0]["output"]
         file_name = row["file_name"]
 
-        user_message = user_message_template.format(
+        user_message = user_template.format(
             training_data=training_data,
             input_test_data=input_test_data
         )
 
-        prompt = f"{system_prompt}\n\n{user_message}"
+        prompt = (
+            f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+            f"<|im_start|>user\n{user_message}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+
         task_predictions = []
 
+        # Compute how many batches we need
         num_batches = (total_samples + batch_size - 1) // batch_size
+
         for b in range(num_batches):
-            print(f"Generating batch {b+1}/{num_batches} for {file_name}...")
+            current_batch_size = min(batch_size, total_samples - len(task_predictions))
             batch_params = SamplingParams(
-                n=batch_size,
+                n=current_batch_size,
                 temperature=sampling_params.temperature,
                 top_p=sampling_params.top_p,
                 max_tokens=sampling_params.max_tokens,
             )
+
+            print(f"Generating batch {b+1}/{num_batches} ({current_batch_size} samples) for {file_name}...")
             outputs = llm.generate([prompt], batch_params)
+
             for sample in outputs[0].outputs:
                 text = sample.text.strip()
                 grid = extract_final_grid(text)
-                task_predictions.append(grid)
+                task_predictions.append({
+                    "raw_output": text,
+                    "grid": grid
+                })
 
         all_results[file_name] = task_predictions
-
         evaluation_results[file_name] = []
+
         for pred in task_predictions:
-            is_match, acc = grid_accuracy(pred, true_grid)
+            is_match, acc = grid_accuracy(pred["grid"], true_grid)
             evaluation_results[file_name].append({
-                "predicted_grid": pred,
+                "test_input": input_test_data,
+                "ground_truth": true_grid,
+                "predicted_grid": pred["grid"],
+                "raw_output": pred["raw_output"],
                 "match": is_match,
                 "cell_accuracy": acc
             })
 
+        # Print summary
         print(f"\n=== Task: {file_name} ===")
         print(f"Ground truth:\n{true_grid}\n")
         for i, res in enumerate(evaluation_results[file_name]):
             print(f"[Sample {i+1}] Match={res['match']}, Accuracy={res['cell_accuracy']:.2f}")
-            print(res['predicted_grid'])
+            print("--- Raw output ---")
+            print(res["raw_output"])
+            print("--- Extracted grid ---")
+            print(res["predicted_grid"])
             print("------")
 
-    return all_results, evaluation_results
+    return all_results, evaluation_results, total_samples
+
 
 
 ######## Main ########
 def main():
     df = create_data_frame(test_run=True)
-    df = df.iloc[[0, 11, 169, 52, 163, 79, 238, 336, 93, 399, 138, 316, 118, 257, 388, 394, 201, 385, 43, 189, 3]]
+    df = df.iloc[[0, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309]]
+    
     llm, sampling_params = init_llm()
-    all_results, evaluation_results = run(df, llm, sampling_params, max_tasks=len(df))
+    all_results, evaluation_results, k = run(df, llm, sampling_params, max_tasks=len(df))
 
     src_dir = Path(__file__).resolve().parent
     output_dir = src_dir / "output"
@@ -283,19 +271,21 @@ def main():
     csv_rows = []
     for file_name, results_list in evaluation_results.items():
         for i, res in enumerate(results_list):
-            predicted_grid_str = str(res["predicted_grid"])
             csv_rows.append({
                 "file_name": file_name,
                 "sample_id": i + 1,
-                "predicted_grid": predicted_grid_str,
+                "test_input": res["test_input"],
+                "ground_truth": res["ground_truth"],
+                "predicted_grid": res["predicted_grid"],
                 "match": res["match"],
                 "cell_accuracy": res["cell_accuracy"]
             })
 
+
     df_csv = pd.DataFrame(csv_rows)
-    csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
+    csv_path = output_dir / f"qwen_{sampling_params.temperature}_{sampling_params.top_k}_{k}.csv"
     df_csv.to_csv(csv_path, index=False)
-    print(f"Saved detailed CSV results to {csv_path}")
+    print(f"Saved CSV to {csv_path}")
 
     del llm
     torch.cuda.empty_cache()
@@ -303,4 +293,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
