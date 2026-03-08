@@ -1,11 +1,14 @@
 """
-ARC English→Python Evolution Pipeline (two-phase thinking, micro-batched generation)
-Single RunConfig controls:
-- temperatures, top_p, top_k, token limits for thinking/answer for English instruction, executor, and Python
-- Berman-style search parameters
-- micro-batch sizes
-- python timeouts
-- padding value (-1) and empty grid default [[-1]]
+ARC English→Python Berman-style full pipeline (refactored + batched for speed)
+
+Adds to output CSV:
+- best_instruction
+- best_python_code
+
+Outputs CSV columns:
+file_name, best_instruction, best_python_code, final_solution, match, accuracy
+
+Padding uses -1 and "no grid" defaults to [[-1]].
 """
 
 from __future__ import annotations
@@ -46,39 +49,38 @@ class SearchConfig:
     top_k: int
     n_individual_revisions: int
     n_pool_revisions: int
-    py_n_candidates: int
-    py_revision_steps: int
+
+
+@dataclass
+class PythonConfig:
+    n_candidates: int
+    top_k_revise: int
+    n_revision_rounds: int
+    timeout_s: float
+    micro_batch_py: int
 
 
 @dataclass
 class BatchConfig:
     mini_batch_init: int
     mini_batch_revisions: int
-    mini_batch_py: int
-
-
-@dataclass
-class TimeoutConfig:
-    python_train_timeout_s: float
-    python_test_timeout_s: float
+    mini_batch_exec: int
 
 
 @dataclass
 class RunConfig:
     instruction: GenPhaseConfig
     executor: GenPhaseConfig
-    python: GenPhaseConfig
-    python_revision: GenPhaseConfig
     pool: GenPhaseConfig
+    python_compile: GenPhaseConfig
+    python_revision: GenPhaseConfig
     search: SearchConfig
+    python: PythonConfig
     batch: BatchConfig
-    timeout: TimeoutConfig
     pad_value: int = -1
-    empty_grid: List[List[int]] = None
 
-    def __post_init__(self):
-        if self.empty_grid is None:
-            self.empty_grid = [[self.pad_value]]
+    def empty_grid(self) -> List[List[int]]:
+        return [[self.pad_value]]
 
 
 # =========================
@@ -106,15 +108,18 @@ class TeeLogger:
 
 
 # =========================
-# Utilities
+# Helpers
 # =========================
-def chunk_list(xs, chunk_size: int):
+def chunk_list(xs: List[Any], chunk_size: int):
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
     for i in range(0, len(xs), chunk_size):
         yield xs[i : i + chunk_size]
 
 
+# =========================
+# Data
+# =========================
 def split_dictionary(data: dict):
     result = {}
     split_files = []
@@ -176,6 +181,9 @@ def create_data_frame(test_run=True, pad_value: int = -1):
     return pd.DataFrame(rows)
 
 
+# =========================
+# LLM
+# =========================
 def init_llm_and_tokenizer(model_subdir="q3_think_f8"):
     import torch
     from transformers import AutoTokenizer
@@ -291,6 +299,44 @@ def extract_grid_anywhere(text: str, empty_grid: List[List[int]]):
     return empty_grid
 
 
+def extract_instruction_anywhere(text: str):
+    if not text:
+        return ""
+    m = re.search(r"<instruction>(.*?)</instruction>", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+def extract_python_code(text: str) -> str:
+    if not text:
+        return ""
+
+    # 1) <python>...</python>
+    m = re.search(r"<python>(.*?)</python>", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # 2) ```python ... ```
+    m = re.search(r"```python(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # 3) any fenced block ```
+    m = re.search(r"```(.*?)```", text, re.DOTALL)
+    if m:
+        block = m.group(1).strip()
+        if "def transform" in block:
+            return block
+
+    # 4) fallback: locate "def transform" to end
+    idx = text.find("def transform")
+    if idx != -1:
+        return text[idx:].strip()
+
+    return ""
+
+
 # =========================
 # Prompt building
 # =========================
@@ -310,8 +356,8 @@ def _ensure_wrapped_think(text: str) -> str:
 def build_instruction_messages(train_examples) -> List[Dict[str, str]]:
     system = (
         "You solve ARC tasks by inferring deterministic transformations.\n"
-        "You must think, then output an <instruction> block.\n"
-        "In <instruction>, write one deterministic procedure. No hedging. Be explicit.\n"
+        "Think first, then output an <instruction> block.\n"
+        "In <instruction>, write one deterministic procedure. No hedging.\n"
         "Do not output code. Do not output the test answer grid.\n"
         "Output format:\n"
         "<think>...</think>\n"
@@ -328,7 +374,7 @@ def build_instruction_messages(train_examples) -> List[Dict[str, str]]:
 def build_revision_messages(instruction: str, train_examples, traces) -> List[Dict[str, str]]:
     system = (
         "You improve an ARC instruction.\n"
-        "You must think, then output an <instruction> block.\n"
+        "Think first, then output an <instruction> block.\n"
         "Fix the failures shown. Keep it deterministic. No code.\n"
         "Output format:\n"
         "<think>...</think>\n"
@@ -357,7 +403,7 @@ def build_revision_messages(instruction: str, train_examples, traces) -> List[Di
 def build_pool_messages(candidates: List[str], train_examples) -> List[Dict[str, str]]:
     system = (
         "You synthesize one best ARC instruction from multiple candidates.\n"
-        "You must think, then output an <instruction> block.\n"
+        "Think first, then output an <instruction> block.\n"
         "Combine correct parts and remove contradictions. Deterministic. No code.\n"
         "Output format:\n"
         "<think>...</think>\n"
@@ -377,7 +423,7 @@ def build_pool_messages(candidates: List[str], train_examples) -> List[Dict[str,
 def build_executor_messages(instruction: str, input_grid) -> List[Dict[str, str]]:
     system = (
         "You are an ARC grid executor.\n"
-        "You must think, then output only the final grid in <answer>.\n"
+        "Think first, then output only the final grid in <answer>.\n"
         "Follow the instruction exactly.\n"
         "Output only: <answer>[[...]]</answer>\n"
         "Never use ellipsis. Write full explicit integers.\n"
@@ -395,49 +441,45 @@ def build_executor_messages(instruction: str, input_grid) -> List[Dict[str, str]
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def build_python_messages(best_instruction: str, train_examples) -> List[Dict[str, str]]:
+def build_python_compile_messages(best_instruction: str, train_examples) -> List[Dict[str, str]]:
     system = (
-        "You write correct Python ARC solvers.\n"
-        "You must think, then output only Python inside <python>.\n"
-        "Output exactly one function: transform(grid)\n"
-        "grid is list[list[int]]; return list[list[int]]\n"
-        "Deterministic, general rule. No I/O. No network.\n"
-        "No imports except optional numpy as np.\n"
-        "Do not use while-loops. Do not use recursion. No brute-force search.\n"
-        "Complexity must be O(H*W) or O(H*W*constant).\n"
+        "You write correct Python for ARC.\n"
+        "Think first, then output Python in <python>.\n"
+        "Write exactly one function transform(grid).\n"
+        "grid is list[list[int]]. Return list[list[int]].\n"
+        "No imports except numpy (optional).\n"
+        "No I/O, no network.\n"
         "Output format:\n"
         "<think>...</think>\n"
-        "<python>def transform(grid): ...</python>\n"
+        "<python>...</python>\n"
     )
     user = (
-        "Best English instruction:\n"
+        "Best instruction:\n"
         f"{best_instruction}\n\n"
         "Training examples:\n"
         f"{train_examples}\n\n"
-        "Write transform(grid). Ensure you return the output grid."
+        "Return the implementation."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def build_python_revision_messages(code: str, train_examples, failures_summary: str) -> List[Dict[str, str]]:
+def build_python_revision_messages(code: str, train_examples, errors_summary: str) -> List[Dict[str, str]]:
     system = (
-        "You debug a Python ARC solver.\n"
-        "You must think, then output only corrected Python inside <python>.\n"
-        "Keep signature: def transform(grid)\n"
-        "Fix the failures shown. Ensure you return the output grid.\n"
-        "Do not use while-loops. Do not use recursion. No brute-force search.\n"
-        "Complexity must be O(H*W) or O(H*W*constant).\n"
+        "You debug Python for ARC.\n"
+        "Think first, then output corrected Python in <python>.\n"
+        "Keep signature transform(grid).\n"
+        "No I/O, no network.\n"
         "Output format:\n"
         "<think>...</think>\n"
-        "<python>def transform(grid): ...</python>\n"
+        "<python>...</python>\n"
     )
     user = (
         "Current code:\n"
-        f"{code}\n\n"
+        f"<python>\n{code}\n</python>\n\n"
         "Training examples:\n"
         f"{train_examples}\n\n"
-        "Failures:\n"
-        f"{failures_summary}\n\n"
+        "Errors:\n"
+        f"{errors_summary}\n\n"
         "Return corrected code."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -494,119 +536,79 @@ def generate_two_phase_tagged_batch_from_messages(
 
 
 # =========================
-# Safe Python exec with timeout
+# Batched fitness (English executor)
 # =========================
-def _normalize_grid_like(out):
-    if out is None:
-        return None
-    if not isinstance(out, list):
-        return None
-    if not all(isinstance(r, list) for r in out):
-        return None
-    return out
-
-
-def _worker_exec(code: str, grid, q: mp.Queue, pad_value: int):
-    try:
-        safe_builtins = {
-            "range": range,
-            "len": len,
-            "min": min,
-            "max": max,
-            "sum": sum,
-            "abs": abs,
-            "enumerate": enumerate,
-            "zip": zip,
-            "list": list,
-            "dict": dict,
-            "set": set,
-            "tuple": tuple,
-            "sorted": sorted,
-            "int": int,
-            "float": float,
-            "any": any,
-            "all": all,
-            "map": map,
-            "filter": filter,
-        }
-        env = {"__builtins__": safe_builtins, "np": np}
-        exec(code, env, env)
-        if "transform" not in env:
-            q.put(("error", "no_transform_defined", [[pad_value]]))
-            return
-        out = env["transform"](grid)
-        out = _normalize_grid_like(out)
-        if out is None:
-            q.put(("error", "bad_or_none_return", [[pad_value]]))
-            return
-        q.put(("ok", "", out))
-    except Exception as e:
-        q.put(("error", repr(e), [[pad_value]]))
-
-
-def run_transform_with_timeout(code: str, grid, timeout_s: float, pad_value: int):
-    q = mp.Queue()
-    p = mp.Process(target=_worker_exec, args=(code, grid, q, pad_value))
-    p.start()
-    p.join(timeout=timeout_s)
-
-    if p.is_alive():
-        p.terminate()
-        p.join()
-        return False, "timeout", [[pad_value]]
-
-    if q.empty():
-        return False, "no_result", [[pad_value]]
-
-    status, msg, out = q.get()
-    out = _normalize_grid_like(out)
-    if status != "ok" or out is None:
-        return False, msg if msg else "error", [[pad_value]]
-
-    return True, msg, out
-
-
-# =========================
-# English evolution
-# =========================
-def fitness_for_instruction(
+def fitness_for_instructions_batched(
     llm,
     tokenizer,
-    instruction: str,
-    train_examples,
+    instructions: List[str],
+    train_examples: List[Dict[str, Any]],
     cfg: RunConfig,
-) -> Tuple[Tuple[int, float], List[Dict[str, Any]]]:
-    exact = 0
-    cell_sum = 0.0
-    traces = []
+) -> Tuple[List[Tuple[int, float]], List[List[Dict[str, Any]]]]:
+    n_instr = len(instructions)
+    n_train = len(train_examples)
 
-    for ex in train_examples:
-        msgs = build_executor_messages(instruction, ex["input"])
-        _, ans_payloads = generate_two_phase_tagged_batch_from_messages(
+    if n_instr == 0:
+        return [], []
+    if n_train == 0:
+        return [(0, 0.0) for _ in range(n_instr)], [[] for _ in range(n_instr)]
+
+    all_msgs: List[List[Dict[str, str]]] = []
+    for instr in instructions:
+        for ex in train_examples:
+            all_msgs.append(build_executor_messages(instr, ex["input"]))
+
+    all_payloads: List[str] = []
+    for chunk in chunk_list(all_msgs, cfg.batch.mini_batch_exec):
+        _, payloads = generate_two_phase_tagged_batch_from_messages(
             llm=llm,
             tokenizer=tokenizer,
-            messages_list=[msgs],
+            messages_list=chunk,
             start_tag="<answer>",
             end_tag="</answer>",
             think_cfg=cfg.executor,
             answer_cfg=cfg.executor,
         )
-        pred_grid = extract_grid_anywhere(ans_payloads[0] if ans_payloads else "", cfg.empty_grid)
-        is_match, acc = grid_accuracy(pred_grid, ex["output"], pad_value=cfg.pad_value)
-        exact += int(is_match)
-        cell_sum += acc
-        traces.append(
-            {
-                "pred_grid": pred_grid,
-                "match": is_match,
-                "cell_accuracy": acc,
-                "raw_answer": ans_payloads[0] if ans_payloads else "",
-            }
-        )
+        all_payloads.extend(payloads)
 
-    return (exact, cell_sum), traces
+    fitness_list: List[Tuple[int, float]] = []
+    traces_list: List[List[Dict[str, Any]]] = []
+
+    idx = 0
+    empty = cfg.empty_grid()
+
+    for i in range(n_instr):
+        exact = 0
+        cell_sum = 0.0
+        traces: List[Dict[str, Any]] = []
+
+        for j in range(n_train):
+            payload = all_payloads[idx] if idx < len(all_payloads) else ""
+            idx += 1
+
+            pred_grid = extract_grid_anywhere(payload, empty)
+            is_match, acc = grid_accuracy(pred_grid, train_examples[j]["output"], pad_value=cfg.pad_value)
+
+            exact += int(is_match)
+            cell_sum += acc
+            traces.append(
+                {
+                    "pred_grid": pred_grid,
+                    "match": is_match,
+                    "cell_accuracy": acc,
+                    "raw_answer": payload,
+                }
+            )
+
+        fitness_list.append((exact, cell_sum))
+        traces_list.append(traces)
+
+    return fitness_list, traces_list
 
 
+# =========================
+# English candidate generation
+# =========================
 def generate_instruction_candidates_microbatched(
     llm,
     tokenizer,
@@ -617,9 +619,9 @@ def generate_instruction_candidates_microbatched(
     base_msgs = build_instruction_messages(train_examples)
     msgs_list = [base_msgs for _ in range(n_candidates)]
 
-    all_payloads = []
+    all_instrs: List[str] = []
     for chunk in chunk_list(msgs_list, cfg.batch.mini_batch_init):
-        _, instr_payloads = generate_two_phase_tagged_batch_from_messages(
+        _, payloads = generate_two_phase_tagged_batch_from_messages(
             llm=llm,
             tokenizer=tokenizer,
             messages_list=chunk,
@@ -628,11 +630,35 @@ def generate_instruction_candidates_microbatched(
             think_cfg=cfg.instruction,
             answer_cfg=cfg.instruction,
         )
-        all_payloads.extend([p.strip() for p in instr_payloads])
+        all_instrs.extend([extract_instruction_anywhere(p) for p in payloads])
 
-    return all_payloads
+    return all_instrs
 
 
+def revise_instructions_microbatched(
+    llm,
+    tokenizer,
+    revision_messages_list: List[List[Dict[str, str]]],
+    cfg: RunConfig,
+) -> List[str]:
+    revised: List[str] = []
+    for chunk in chunk_list(revision_messages_list, cfg.batch.mini_batch_revisions):
+        _, payloads = generate_two_phase_tagged_batch_from_messages(
+            llm=llm,
+            tokenizer=tokenizer,
+            messages_list=chunk,
+            start_tag="<instruction>",
+            end_tag="</instruction>",
+            think_cfg=cfg.instruction,
+            answer_cfg=cfg.instruction,
+        )
+        revised.extend([extract_instruction_anywhere(p) for p in payloads])
+    return revised
+
+
+# =========================
+# Evolution (English)
+# =========================
 def evolve_english_instruction_for_task(
     llm,
     tokenizer,
@@ -649,9 +675,16 @@ def evolve_english_instruction_for_task(
         cfg=cfg,
     )
 
+    fits, traces_list = fitness_for_instructions_batched(
+        llm=llm,
+        tokenizer=tokenizer,
+        instructions=instructions,
+        train_examples=train_examples,
+        cfg=cfg,
+    )
+
     scored = []
-    for instr in instructions:
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
+    for instr, fit, traces in zip(instructions, fits, traces_list):
         scored.append({"instruction": instr, "fitness": fit, "traces": traces})
 
     scored.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
@@ -667,27 +700,28 @@ def evolve_english_instruction_for_task(
     for p in parents[:n_rev]:
         rev_msgs_list.append(build_revision_messages(p["instruction"], train_examples, p["traces"]))
 
-    revised_payloads_all = []
-    for chunk in chunk_list(rev_msgs_list, cfg.batch.mini_batch_revisions):
-        _, revised_payloads = generate_two_phase_tagged_batch_from_messages(
-            llm=llm,
-            tokenizer=tokenizer,
-            messages_list=chunk,
-            start_tag="<instruction>",
-            end_tag="</instruction>",
-            think_cfg=cfg.instruction,
-            answer_cfg=cfg.instruction,
-        )
-        revised_payloads_all.extend([p.strip() for p in revised_payloads])
+    revised_instrs = revise_instructions_microbatched(
+        llm=llm,
+        tokenizer=tokenizer,
+        revision_messages_list=rev_msgs_list,
+        cfg=cfg,
+    )
 
     revised = []
-    for instr in revised_payloads_all:
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
-        revised.append({"instruction": instr, "fitness": fit, "traces": traces})
+    if revised_instrs:
+        rev_fits, rev_traces_list = fitness_for_instructions_batched(
+            llm=llm,
+            tokenizer=tokenizer,
+            instructions=revised_instrs,
+            train_examples=train_examples,
+            cfg=cfg,
+        )
+        for instr, fit, traces in zip(revised_instrs, rev_fits, rev_traces_list):
+            revised.append({"instruction": instr, "fitness": fit, "traces": traces})
 
-    revised.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
-    if revised and revised[0]["fitness"] > best["fitness"]:
-        best = revised[0]
+        revised.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+        if revised and revised[0]["fitness"] > best["fitness"]:
+            best = revised[0]
 
     if best["fitness"][0] == len(train_examples):
         return best, scored + revised
@@ -705,9 +739,16 @@ def evolve_english_instruction_for_task(
             think_cfg=cfg.pool,
             answer_cfg=cfg.pool,
         )
-        instr = payloads[0].strip() if payloads else ""
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
-        pooled.append({"instruction": instr, "fitness": fit, "traces": traces})
+        instr = extract_instruction_anywhere(payloads[0] if payloads else "")
+
+        pool_fit, pool_traces = fitness_for_instructions_batched(
+            llm=llm,
+            tokenizer=tokenizer,
+            instructions=[instr],
+            train_examples=train_examples,
+            cfg=cfg,
+        )
+        pooled.append({"instruction": instr, "fitness": pool_fit[0], "traces": pool_traces[0]})
 
     pooled.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
     if pooled and pooled[0]["fitness"] > best["fitness"]:
@@ -717,67 +758,157 @@ def evolve_english_instruction_for_task(
 
 
 # =========================
-# Python generation + selection
+# Python execution with timeout
 # =========================
-def python_candidates_from_instruction_microbatched(
+def _worker_exec(code: str, grid, q: mp.Queue):
+    try:
+        safe_builtins = {
+            "range": range,
+            "len": len,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "abs": abs,
+            "enumerate": enumerate,
+            "zip": zip,
+            "list": list,
+            "dict": dict,
+            "set": set,
+            "tuple": tuple,
+            "sorted": sorted,
+            "int": int,
+            "float": float,
+        }
+        env = {"__builtins__": safe_builtins, "np": np}
+        exec(code, env, env)
+        if "transform" not in env:
+            q.put(("error", "No transform(grid) defined", None))
+            return
+        out = env["transform"](grid)
+        q.put(("ok", "", out))
+    except Exception as e:
+        q.put(("error", repr(e), None))
+
+
+def run_transform_with_timeout(code: str, grid, timeout_s=5.0):
+    q = mp.Queue()
+    p = mp.Process(target=_worker_exec, args=(code, grid, q))
+    p.start()
+    p.join(timeout=timeout_s)
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        return False, "timeout", None
+    if q.empty():
+        return False, "no_result", None
+    status, msg, out = q.get()
+    return (status == "ok"), msg, out
+
+
+def normalize_grid_or_empty(grid, empty_grid: List[List[int]]):
+    if not isinstance(grid, list) or not grid:
+        return empty_grid
+    if not all(isinstance(r, list) and r for r in grid):
+        return empty_grid
+    norm = []
+    for r in grid:
+        row = []
+        for v in r:
+            try:
+                if v is Ellipsis:
+                    row.append(empty_grid[0][0])
+                else:
+                    row.append(int(v))
+            except Exception:
+                row.append(empty_grid[0][0])
+        norm.append(row)
+    return norm
+
+
+# =========================
+# Python scoring
+# =========================
+def score_python_on_train(code: str, train_examples, pad_value: int, timeout_s: float):
+    exact = 0
+    cell_sum = 0.0
+    errors: List[str] = []
+    traces: List[Dict[str, Any]] = []
+
+    empty = [[pad_value]]
+
+    for i, ex in enumerate(train_examples):
+        ok, msg, pred = run_transform_with_timeout(code, ex["input"], timeout_s=timeout_s)
+        if not ok:
+            errors.append(f"Example {i}: error={msg}")
+            pred_grid = empty
+        else:
+            pred_grid = normalize_grid_or_empty(pred, empty)
+
+        is_match, acc = grid_accuracy(pred_grid, ex["output"], pad_value=pad_value)
+        exact += int(is_match)
+        cell_sum += acc
+
+        pred_h = len(pred_grid) if isinstance(pred_grid, list) else 0
+        pred_w = len(pred_grid[0]) if pred_h > 0 and isinstance(pred_grid[0], list) else 0
+
+        traces.append(
+            {
+                "pred_grid": pred_grid,
+                "ok": ok,
+                "msg": msg,
+                "match": is_match,
+                "cell_accuracy": acc,
+            }
+        )
+
+        if ok and not is_match:
+            errors.append(f"Example {i}: mismatch acc={acc:.2f} pred_shape={pred_h}x{pred_w}")
+
+    return (exact, cell_sum), errors, traces
+
+
+# =========================
+# Python generation + revision
+# =========================
+def generate_python_candidates_microbatched(
     llm,
     tokenizer,
     best_instruction: str,
     train_examples,
-    n_candidates: int,
     cfg: RunConfig,
 ) -> List[str]:
-    base_msgs = build_python_messages(best_instruction, train_examples)
-    msgs_list = [base_msgs for _ in range(n_candidates)]
+    msgs = build_python_compile_messages(best_instruction, train_examples)
+    msgs_list = [msgs for _ in range(cfg.python.n_candidates)]
 
-    all_payloads = []
-    for chunk in chunk_list(msgs_list, cfg.batch.mini_batch_py):
-        _, py_payloads = generate_two_phase_tagged_batch_from_messages(
+    codes: List[str] = []
+    for chunk in chunk_list(msgs_list, cfg.python.micro_batch_py):
+        _, payloads = generate_two_phase_tagged_batch_from_messages(
             llm=llm,
             tokenizer=tokenizer,
             messages_list=chunk,
             start_tag="<python>",
             end_tag="</python>",
-            think_cfg=cfg.python,
-            answer_cfg=cfg.python,
+            think_cfg=cfg.python_compile,
+            answer_cfg=cfg.python_compile,
         )
-        all_payloads.extend([p.strip() for p in py_payloads if p.strip()])
-
-    return all_payloads
-
-
-def score_python_on_train(code: str, train_examples, cfg: RunConfig):
-    exact = 0
-    cell_sum = 0.0
-    errors = []
-    traces = []
-
-    for i, ex in enumerate(train_examples):
-        ok, msg, pred = run_transform_with_timeout(
-            code=code,
-            grid=ex["input"],
-            timeout_s=cfg.timeout.python_train_timeout_s,
-            pad_value=cfg.pad_value,
-        )
-        if not ok:
-            errors.append(f"Example {i}: error={msg}")
-            pred = cfg.empty_grid
-
-        is_match, acc = grid_accuracy(pred, ex["output"], pad_value=cfg.pad_value)
-        exact += int(is_match)
-        cell_sum += acc
-
-        traces.append({"pred_grid": pred, "ok": ok, "msg": msg, "match": is_match, "cell_accuracy": acc})
-
-        if ok and not is_match:
-            h = len(pred) if isinstance(pred, list) else 0
-            w = len(pred[0]) if (isinstance(pred, list) and pred and isinstance(pred[0], list)) else 0
-            errors.append(f"Example {i}: mismatch (acc={acc:.2f}) pred_shape={h}x{w}")
-
-    return (exact, cell_sum), errors, traces
+        for p in payloads:
+            code = extract_python_code(p)
+            if code.strip():
+                codes.append(code)
+    
+    if not codes:
+        print("RAW PY PAYLOAD PREVIEW:", repr(payloads[0][:800] if payloads else "NO PAYLOAD"))
+    return codes
 
 
-def improve_python(llm, tokenizer, code: str, train_examples, errors_summary: str, cfg: RunConfig) -> str:
+def revise_best_python_once(
+    llm,
+    tokenizer,
+    code: str,
+    train_examples,
+    errors_summary: str,
+    cfg: RunConfig,
+) -> str:
     msgs = build_python_revision_messages(code, train_examples, errors_summary)
     _, payloads = generate_two_phase_tagged_batch_from_messages(
         llm=llm,
@@ -788,50 +919,99 @@ def improve_python(llm, tokenizer, code: str, train_examples, errors_summary: st
         think_cfg=cfg.python_revision,
         answer_cfg=cfg.python_revision,
     )
-    new_code = payloads[0].strip() if payloads else ""
-    return new_code if new_code else code
+    new_code = extract_python_code(payloads[0] if payloads else "")
+    return new_code if new_code.strip() else code
 
 
-def select_best_python(
+def select_best_python_width(
     llm,
     tokenizer,
     best_instruction: str,
     train_examples,
     cfg: RunConfig,
-):
-    s = cfg.search
-    candidates = python_candidates_from_instruction_microbatched(
+    logger: TeeLogger,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+
+    codes = generate_python_candidates_microbatched(
         llm=llm,
         tokenizer=tokenizer,
         best_instruction=best_instruction,
         train_examples=train_examples,
-        n_candidates=s.py_n_candidates,
         cfg=cfg,
     )
 
-    scored = []
-    for code in candidates:
-        fit, errs, traces = score_python_on_train(code, train_examples, cfg)
+    history: List[Dict[str, Any]] = []
+    scored: List[Dict[str, Any]] = []
+
+    for code in codes:
+        fit, errs, traces = score_python_on_train(
+            code=code,
+            train_examples=train_examples,
+            pad_value=cfg.pad_value,
+            timeout_s=cfg.python.timeout_s,
+        )
         scored.append({"code": code, "fitness": fit, "errors": errs, "traces": traces})
 
     if not scored:
         return {"code": "", "fitness": (0, 0.0), "errors": ["no_code_generated"], "traces": []}, []
 
     scored.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
-    best = scored[0]
-    history = scored[:]
+    history.extend(scored)
 
-    for _ in range(s.py_revision_steps):
+    best = scored[0]
+
+    # Width-only revision rounds: revise top_k_revise once per round (batched)
+    for _ in range(cfg.python.n_revision_rounds):
+        topk = scored[: min(cfg.python.top_k_revise, len(scored))]
+
+        rev_msgs_list = []
+        for item in topk:
+            errs_summary = "\n".join(item["errors"][:8]) if item["errors"] else "Only mismatches; no runtime errors."
+            rev_msgs_list.append(build_python_revision_messages(item["code"], train_examples, errs_summary))
+
+        revised_codes: List[str] = []
+        for chunk in chunk_list(rev_msgs_list, cfg.python.micro_batch_py):
+            _, payloads = generate_two_phase_tagged_batch_from_messages(
+                llm=llm,
+                tokenizer=tokenizer,
+                messages_list=chunk,
+                start_tag="<python>",
+                end_tag="</python>",
+                think_cfg=cfg.python_revision,
+                answer_cfg=cfg.python_revision,
+            )
+            for p in payloads:
+                c = extract_python_code(p)
+                if c.strip():
+                    revised_codes.append(c)
+
+        revised_scored: List[Dict[str, Any]] = []
+        for code in revised_codes:
+            fit, errs, traces = score_python_on_train(
+                code=code,
+                train_examples=train_examples,
+                pad_value=cfg.pad_value,
+                timeout_s=cfg.python.timeout_s,
+            )
+            revised_scored.append({"code": code, "fitness": fit, "errors": errs, "traces": traces})
+
+        if not revised_scored:
+            break
+
+        revised_scored.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+        history.extend(revised_scored)
+
+        # Merge sets for the next round and update best
+        scored = sorted(scored + revised_scored, key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+        if scored[0]["fitness"] > best["fitness"]:
+            best = scored[0]
+
+        # Optional early stop if perfect on train
         if best["fitness"][0] == len(train_examples):
             break
-        errs_summary = "\n".join(best["errors"][:10]) if best["errors"] else "No explicit errors, only mismatches."
-        new_code = improve_python(llm, tokenizer, best["code"], train_examples, errs_summary, cfg)
-        new_fit, new_errs, new_traces = score_python_on_train(new_code, train_examples, cfg)
-        cand = {"code": new_code, "fitness": new_fit, "errors": new_errs, "traces": new_traces}
-        history.append(cand)
-        if cand["fitness"] > best["fitness"]:
-            best = cand
 
+    logger.print(f"Best Python fitness (exact, cell_sum): {best['fitness']}")
+    logger.print("Best Python code preview:\n" + best["code"][:1200] + ("..." if len(best["code"]) > 1200 else ""))
     return best, history
 
 
@@ -872,34 +1052,28 @@ def run_full_pipeline(
         logger.print(f"Best English fitness (exact, cell_sum): {best_eng['fitness']}")
         logger.print("Best instruction:\n" + best_instruction[:1200] + ("..." if len(best_instruction) > 1200 else ""))
 
-        best_py, _ = select_best_python(
+        best_py, _ = select_best_python_width(
             llm=llm,
             tokenizer=tokenizer,
             best_instruction=best_instruction,
             train_examples=train_examples,
             cfg=cfg,
+            logger=logger,
         )
+        best_python_code = best_py["code"]
 
-        best_code = best_py["code"]
-        logger.print(f"Best Python fitness (exact, cell_sum): {best_py['fitness']}")
-        logger.print("Best Python code preview:\n" + (best_code[:800] if best_code else "<EMPTY>"))
-
+        final_pred = cfg.empty_grid()
         mode = "python"
-        final_pred = cfg.empty_grid
 
-        if best_code and best_code.strip():
-            ok, msg, py_pred = run_transform_with_timeout(
-                code=best_code,
-                grid=test_input_grid,
-                timeout_s=cfg.timeout.python_test_timeout_s,
-                pad_value=cfg.pad_value,
-            )
+        if best_python_code.strip():
+            ok, msg, pred = run_transform_with_timeout(best_python_code, test_input_grid, timeout_s=cfg.python.timeout_s)
             if ok:
-                final_pred = py_pred
+                final_pred = normalize_grid_or_empty(pred, cfg.empty_grid())
             else:
                 logger.print(f"Python failed on test ({msg}); fallback to English executor.")
                 mode = "english_fallback"
         else:
+            logger.print("No python code produced; fallback to English executor.")
             mode = "english_fallback"
 
         if mode == "english_fallback":
@@ -913,7 +1087,8 @@ def run_full_pipeline(
                 think_cfg=cfg.executor,
                 answer_cfg=cfg.executor,
             )
-            final_pred = extract_grid_anywhere(payloads[0] if payloads else "", cfg.empty_grid)
+            payload = payloads[0] if payloads else ""
+            final_pred = extract_grid_anywhere(payload, cfg.empty_grid())
 
         is_match, acc = grid_accuracy(final_pred, true_test_grid, pad_value=cfg.pad_value)
         logger.print(f"TEST: mode={mode} match={is_match} acc={acc:.2f}")
@@ -921,6 +1096,8 @@ def run_full_pipeline(
         out_rows.append(
             {
                 "file_name": file_name,
+                "best_instruction": best_instruction,
+                "best_python_code": best_python_code,
                 "final_solution": final_pred,
                 "match": is_match,
                 "accuracy": acc,
@@ -940,8 +1117,8 @@ def main():
 
     cfg = RunConfig(
         instruction=GenPhaseConfig(
-            think_tokens=5000,
-            think_temp=1,
+            think_tokens=4096,
+            think_temp=0.9,
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=1400,
@@ -953,34 +1130,34 @@ def main():
             think_temp=0.7,
             think_top_p=0.95,
             think_top_k=20,
-            answer_tokens=1400,
+            answer_tokens=1500,
             answer_temp=0.2,
-            answer_top_p=1.0,
-        ),
-        python=GenPhaseConfig(
-            think_tokens=4096,
-            think_temp=1,
-            think_top_p=0.95,
-            think_top_k=20,
-            answer_tokens=2600,
-            answer_temp=0.15,
-            answer_top_p=1.0,
-        ),
-        python_revision=GenPhaseConfig(
-            think_tokens=2048,
-            think_temp=0.75,
-            think_top_p=0.95,
-            think_top_k=20,
-            answer_tokens=2600,
-            answer_temp=0.15,
             answer_top_p=1.0,
         ),
         pool=GenPhaseConfig(
             think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1500,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_compile=GenPhaseConfig(
+            think_tokens=4000,
             think_temp=0.8,
             think_top_p=0.95,
             think_top_k=20,
-            answer_tokens=1400,
+            answer_tokens=2600,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2000,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
             answer_temp=0.2,
             answer_top_p=1.0,
         ),
@@ -989,32 +1166,33 @@ def main():
             top_k=20,
             n_individual_revisions=15,
             n_pool_revisions=15,
-            py_n_candidates=40,
-            py_revision_steps=15,
+        ),
+        python=PythonConfig(
+            n_candidates=40,
+            top_k_revise=15,
+            n_revision_rounds=1,
+            timeout_s=2.5,
+            micro_batch_py=20,
+
         ),
         batch=BatchConfig(
             mini_batch_init=20,
             mini_batch_revisions=15,
-            mini_batch_py=20,
-        ),
-        timeout=TimeoutConfig(
-            python_train_timeout_s=2.5,
-            python_test_timeout_s=2.5,
+            mini_batch_exec=20,
         ),
         pad_value=-1,
     )
 
     df = create_data_frame(test_run=True, pad_value=cfg.pad_value)
-    df = df.iloc[[0]]
-    #, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309
+    df = df.iloc[[388, 275 , 303, 357]]
 
     src_dir = Path(__file__).resolve().parent
     output_dir = src_dir / "output"
     output_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = output_dir / f"runlog_{timestamp}.txt"
-    csv_path = output_dir / f"final_{timestamp}.csv"
+    log_path = output_dir / f"runlog_full_fast_{timestamp}.txt"
+    csv_path = output_dir / f"final_full_fast_{timestamp}.csv"
 
     logger = TeeLogger(log_path)
     logger.print(f"Logging to: {log_path}")
@@ -1033,7 +1211,10 @@ def main():
             max_tasks=len(df),
         )
 
-        out_df[["file_name", "final_solution", "match", "accuracy"]].to_csv(csv_path, index=False)
+        out_df[
+            ["file_name", "best_instruction", "best_python_code", "final_solution", "match", "accuracy"]
+        ].to_csv(csv_path, index=False)
+
         logger.print(f"\nSaved CSV to: {csv_path}")
 
     finally:

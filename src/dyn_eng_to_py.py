@@ -1,11 +1,18 @@
 """
 ARC English→Python Evolution Pipeline (two-phase thinking, micro-batched generation)
+
 Single RunConfig controls:
 - temperatures, top_p, top_k, token limits for thinking/answer for English instruction, executor, and Python
 - Berman-style search parameters
 - micro-batch sizes
 - python timeouts
 - padding value (-1) and empty grid default [[-1]]
+
+Update:
+- Stage-wise ("funnel") revisions for English instructions:
+  - revise wider early, then keep fewer candidates and revise deeper
+- Stage-wise ("funnel") revisions for Python solvers:
+  - revise wider early, then keep fewer candidates and revise deeper
 """
 
 from __future__ import annotations
@@ -49,12 +56,24 @@ class SearchConfig:
     py_n_candidates: int
     py_revision_steps: int
 
+    # New: staged funnel revisions for English
+    # Example: rev_stage_keeps=[10, 5, 2], rev_stage_rounds=[1, 2, 4]
+    # Means: keep 10 and do 1 round; keep 5 and do 2 rounds; keep 2 and do 4 rounds.
+    rev_stage_keeps: Optional[List[int]] = None
+    rev_stage_rounds: Optional[List[int]] = None
+
+    # New: staged funnel revisions for Python
+    # Example: py_rev_stage_keeps=[10, 3, 1], py_rev_stage_rounds=[1, 2, 6]
+    py_rev_stage_keeps: Optional[List[int]] = None
+    py_rev_stage_rounds: Optional[List[int]] = None
+
 
 @dataclass
 class BatchConfig:
     mini_batch_init: int
     mini_batch_revisions: int
     mini_batch_py: int
+    mini_batch_exec: int  # NEW: micro-batch size for executor fitness scoring
 
 
 @dataclass
@@ -569,42 +588,64 @@ def run_transform_with_timeout(code: str, grid, timeout_s: float, pad_value: int
 # =========================
 # English evolution
 # =========================
-def fitness_for_instruction(
+def fitness_for_instructions_microbatched(
     llm,
     tokenizer,
-    instruction: str,
+    instructions: List[str],
     train_examples,
     cfg: RunConfig,
-) -> Tuple[Tuple[int, float], List[Dict[str, Any]]]:
-    exact = 0
-    cell_sum = 0.0
-    traces = []
+    mini_batch_exec: int,
+) -> Tuple[List[Tuple[int, float]], List[List[Dict[str, Any]]]]:
+    """
+    Scores multiple English instructions efficiently by batching executor calls.
+
+    Returns:
+      fitnesses: list[(exact, cell_sum)] aligned with instructions
+      traces_all: list[list[trace_per_example]] aligned with instructions
+    """
+    n = len(instructions)
+    if n == 0:
+        return [], []
+
+    exacts = [0] * n
+    cell_sums = [0.0] * n
+    traces_all: List[List[Dict[str, Any]]] = [[] for _ in range(n)]
 
     for ex in train_examples:
-        msgs = build_executor_messages(instruction, ex["input"])
-        _, ans_payloads = generate_two_phase_tagged_batch_from_messages(
-            llm=llm,
-            tokenizer=tokenizer,
-            messages_list=[msgs],
-            start_tag="<answer>",
-            end_tag="</answer>",
-            think_cfg=cfg.executor,
-            answer_cfg=cfg.executor,
-        )
-        pred_grid = extract_grid_anywhere(ans_payloads[0] if ans_payloads else "", cfg.empty_grid)
-        is_match, acc = grid_accuracy(pred_grid, ex["output"], pad_value=cfg.pad_value)
-        exact += int(is_match)
-        cell_sum += acc
-        traces.append(
-            {
-                "pred_grid": pred_grid,
-                "match": is_match,
-                "cell_accuracy": acc,
-                "raw_answer": ans_payloads[0] if ans_payloads else "",
-            }
-        )
+        msgs_list = [build_executor_messages(instr, ex["input"]) for instr in instructions]
 
-    return (exact, cell_sum), traces
+        payloads_all: List[str] = []
+        for chunk in chunk_list(msgs_list, mini_batch_exec):
+            _, ans_payloads = generate_two_phase_tagged_batch_from_messages(
+                llm=llm,
+                tokenizer=tokenizer,
+                messages_list=chunk,
+                start_tag="<answer>",
+                end_tag="</answer>",
+                think_cfg=cfg.executor,
+                answer_cfg=cfg.executor,
+            )
+            payloads_all.extend(ans_payloads)
+
+        # Align payloads with instructions
+        for i in range(n):
+            raw = payloads_all[i] if i < len(payloads_all) else ""
+            pred_grid = extract_grid_anywhere(raw, cfg.empty_grid)
+            is_match, acc = grid_accuracy(pred_grid, ex["output"], pad_value=cfg.pad_value)
+
+            exacts[i] += int(is_match)
+            cell_sums[i] += acc
+            traces_all[i].append(
+                {
+                    "pred_grid": pred_grid,
+                    "match": is_match,
+                    "cell_accuracy": acc,
+                    "raw_answer": raw,
+                }
+            )
+
+    fitnesses = [(exacts[i], cell_sums[i]) for i in range(n)]
+    return fitnesses, traces_all
 
 
 def generate_instruction_candidates_microbatched(
@@ -633,6 +674,76 @@ def generate_instruction_candidates_microbatched(
     return all_payloads
 
 
+def _stagewise_revise_english_candidates(
+    llm,
+    tokenizer,
+    candidates: List[Dict[str, Any]],
+    train_examples,
+    cfg: RunConfig,
+    stage_keeps: List[int],
+    stage_rounds: List[int],
+) -> List[Dict[str, Any]]:
+    if not candidates:
+        return candidates
+    if not stage_keeps or not stage_rounds:
+        return candidates
+    if len(stage_keeps) != len(stage_rounds):
+        raise ValueError("rev_stage_keeps and rev_stage_rounds must have same length")
+
+    candidates.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+
+    for keep_n, rounds in zip(stage_keeps, stage_rounds):
+        keep_n = max(1, min(keep_n, len(candidates)))
+        candidates = candidates[:keep_n]
+
+        for _ in range(rounds):
+            # 1) Build revision prompts for survivors
+            rev_msgs_list = [
+                build_revision_messages(c["instruction"], train_examples, c["traces"])
+                for c in candidates
+            ]
+
+            # 2) Generate revised instructions micro-batched
+            revised_payloads_all: List[str] = []
+            for chunk in chunk_list(rev_msgs_list, cfg.batch.mini_batch_revisions):
+                _, revised_payloads = generate_two_phase_tagged_batch_from_messages(
+                    llm=llm,
+                    tokenizer=tokenizer,
+                    messages_list=chunk,
+                    start_tag="<instruction>",
+                    end_tag="</instruction>",
+                    think_cfg=cfg.instruction,
+                    answer_cfg=cfg.instruction,
+                )
+                revised_payloads_all.extend([p.strip() for p in revised_payloads])
+
+            # 3) Score revised instructions in one batched fitness pass
+            revised_fits, revised_traces_all = fitness_for_instructions_microbatched(
+                llm=llm,
+                tokenizer=tokenizer,
+                instructions=revised_payloads_all,
+                train_examples=train_examples,
+                cfg=cfg,
+                mini_batch_exec=cfg.batch.mini_batch_exec,
+            )
+
+            # 4) Keep best of (old vs revised) per slot
+            new_candidates = []
+            for old_c, new_instr, new_fit, new_traces in zip(
+                candidates, revised_payloads_all, revised_fits, revised_traces_all
+            ):
+                new_c = {"instruction": new_instr, "fitness": new_fit, "traces": new_traces}
+                if new_c["fitness"] > old_c["fitness"]:
+                    new_candidates.append(new_c)
+                else:
+                    new_candidates.append(old_c)
+
+            candidates = new_candidates
+            candidates.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+
+    return candidates
+
+
 def evolve_english_instruction_for_task(
     llm,
     tokenizer,
@@ -649,53 +760,60 @@ def evolve_english_instruction_for_task(
         cfg=cfg,
     )
 
+    # Batched scoring for initial population
+    fits, traces_all = fitness_for_instructions_microbatched(
+        llm=llm,
+        tokenizer=tokenizer,
+        instructions=instructions,
+        train_examples=train_examples,
+        cfg=cfg,
+        mini_batch_exec=cfg.batch.mini_batch_exec,
+    )
+
     scored = []
-    for instr in instructions:
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
+    for instr, fit, traces in zip(instructions, fits, traces_all):
         scored.append({"instruction": instr, "fitness": fit, "traces": traces})
 
     scored.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
     best = scored[0]
+    history = scored[:]
 
     if best["fitness"][0] == len(train_examples):
-        return best, scored
+        return best, history
 
     parents = scored[: s.top_k]
-    n_rev = min(s.n_individual_revisions, len(parents))
-
-    rev_msgs_list = []
-    for p in parents[:n_rev]:
-        rev_msgs_list.append(build_revision_messages(p["instruction"], train_examples, p["traces"]))
-
-    revised_payloads_all = []
-    for chunk in chunk_list(rev_msgs_list, cfg.batch.mini_batch_revisions):
-        _, revised_payloads = generate_two_phase_tagged_batch_from_messages(
-            llm=llm,
-            tokenizer=tokenizer,
-            messages_list=chunk,
-            start_tag="<instruction>",
-            end_tag="</instruction>",
-            think_cfg=cfg.instruction,
-            answer_cfg=cfg.instruction,
-        )
-        revised_payloads_all.extend([p.strip() for p in revised_payloads])
 
     revised = []
-    for instr in revised_payloads_all:
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
-        revised.append({"instruction": instr, "fitness": fit, "traces": traces})
+    if s.rev_stage_keeps and s.rev_stage_rounds:
+        revised = _stagewise_revise_english_candidates(
+            llm=llm,
+            tokenizer=tokenizer,
+            candidates=[
+                {"instruction": p["instruction"], "fitness": p["fitness"], "traces": p["traces"]}
+                for p in parents
+            ],
+            train_examples=train_examples,
+            cfg=cfg,
+            stage_keeps=s.rev_stage_keeps,
+            stage_rounds=s.rev_stage_rounds,
+        )
+        revised.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+        history.extend(revised)
+        if revised and revised[0]["fitness"] > best["fitness"]:
+            best = revised[0]
 
-    revised.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
-    if revised and revised[0]["fitness"] > best["fitness"]:
-        best = revised[0]
+        if best["fitness"][0] == len(train_examples):
+            return best, history
 
-    if best["fitness"][0] == len(train_examples):
-        return best, scored + revised
-
+    # Pooling (still useful), but keep it cheaper by seeding from revised if available
     pooled = []
-    top_instrs = [p["instruction"] for p in scored[: s.top_k]]
+    if revised:
+        pool_seed = [c["instruction"] for c in revised[: min(s.top_k, len(revised))]]
+    else:
+        pool_seed = [p["instruction"] for p in scored[: s.top_k]]
+
     for _ in range(s.n_pool_revisions):
-        msgs = build_pool_messages(top_instrs, train_examples)
+        msgs = build_pool_messages(pool_seed, train_examples)
         _, payloads = generate_two_phase_tagged_batch_from_messages(
             llm=llm,
             tokenizer=tokenizer,
@@ -706,14 +824,23 @@ def evolve_english_instruction_for_task(
             answer_cfg=cfg.pool,
         )
         instr = payloads[0].strip() if payloads else ""
-        fit, traces = fitness_for_instruction(llm, tokenizer, instr, train_examples, cfg)
-        pooled.append({"instruction": instr, "fitness": fit, "traces": traces})
+        # Score pooled instruction (single item, but we can still reuse batched scorer)
+        p_fits, p_traces = fitness_for_instructions_microbatched(
+            llm=llm,
+            tokenizer=tokenizer,
+            instructions=[instr],
+            train_examples=train_examples,
+            cfg=cfg,
+            mini_batch_exec=cfg.batch.mini_batch_exec,
+        )
+        pooled.append({"instruction": instr, "fitness": p_fits[0], "traces": p_traces[0]})
 
     pooled.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+    history.extend(pooled)
     if pooled and pooled[0]["fitness"] > best["fitness"]:
         best = pooled[0]
 
-    return best, scored + revised + pooled
+    return best, history
 
 
 # =========================
@@ -792,6 +919,69 @@ def improve_python(llm, tokenizer, code: str, train_examples, errors_summary: st
     return new_code if new_code else code
 
 
+def _stagewise_revise_python_candidates(
+    llm,
+    tokenizer,
+    candidates: List[Dict[str, Any]],
+    train_examples,
+    cfg: RunConfig,
+    stage_keeps: List[int],
+    stage_rounds: List[int],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not candidates:
+        return candidates, []
+    if not stage_keeps or not stage_rounds:
+        return candidates, []
+    if len(stage_keeps) != len(stage_rounds):
+        raise ValueError("py_rev_stage_keeps and py_rev_stage_rounds must have same length")
+
+    history = []
+    candidates.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+
+    for keep_n, rounds in zip(stage_keeps, stage_rounds):
+        keep_n = max(1, min(keep_n, len(candidates)))
+        candidates = candidates[:keep_n]
+
+        for _ in range(rounds):
+            msgs_list = []
+            for c in candidates:
+                errs_summary = "\n".join(c["errors"][:10]) if c.get("errors") else "No explicit errors, only mismatches."
+                msgs_list.append(build_python_revision_messages(c["code"], train_examples, errs_summary))
+
+            revised_codes = []
+            for chunk in chunk_list(msgs_list, cfg.batch.mini_batch_py):
+                _, payloads = generate_two_phase_tagged_batch_from_messages(
+                    llm=llm,
+                    tokenizer=tokenizer,
+                    messages_list=chunk,
+                    start_tag="<python>",
+                    end_tag="</python>",
+                    think_cfg=cfg.python_revision,
+                    answer_cfg=cfg.python_revision,
+                )
+                revised_codes.extend([p.strip() for p in payloads])
+
+            new_candidates = []
+            for old_c, new_code in zip(candidates, revised_codes):
+                if not new_code:
+                    new_candidates.append(old_c)
+                    continue
+
+                new_fit, new_errs, new_traces = score_python_on_train(new_code, train_examples, cfg)
+                new_c = {"code": new_code, "fitness": new_fit, "errors": new_errs, "traces": new_traces}
+                history.append(new_c)
+
+                if new_c["fitness"] > old_c["fitness"]:
+                    new_candidates.append(new_c)
+                else:
+                    new_candidates.append(old_c)
+
+            candidates = new_candidates
+            candidates.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+
+    return candidates, history
+
+
 def select_best_python(
     llm,
     tokenizer,
@@ -800,7 +990,9 @@ def select_best_python(
     cfg: RunConfig,
 ):
     s = cfg.search
-    candidates = python_candidates_from_instruction_microbatched(
+
+    # 1) Generate N python samples
+    codes = python_candidates_from_instruction_microbatched(
         llm=llm,
         tokenizer=tokenizer,
         best_instruction=best_instruction,
@@ -809,8 +1001,9 @@ def select_best_python(
         cfg=cfg,
     )
 
+    # 2) Score all N
     scored = []
-    for code in candidates:
+    for code in codes:
         fit, errs, traces = score_python_on_train(code, train_examples, cfg)
         scored.append({"code": code, "fitness": fit, "errors": errs, "traces": traces})
 
@@ -821,16 +1014,55 @@ def select_best_python(
     best = scored[0]
     history = scored[:]
 
-    for _ in range(s.py_revision_steps):
-        if best["fitness"][0] == len(train_examples):
-            break
-        errs_summary = "\n".join(best["errors"][:10]) if best["errors"] else "No explicit errors, only mismatches."
-        new_code = improve_python(llm, tokenizer, best["code"], train_examples, errs_summary, cfg)
-        new_fit, new_errs, new_traces = score_python_on_train(new_code, train_examples, cfg)
-        cand = {"code": new_code, "fitness": new_fit, "errors": new_errs, "traces": new_traces}
-        history.append(cand)
-        if cand["fitness"] > best["fitness"]:
-            best = cand
+    # If no staged python schedule configured, fall back to old single-best iterative behavior
+    if not (s.py_rev_stage_keeps and s.py_rev_stage_rounds):
+        for _ in range(s.py_revision_steps):
+            if best["fitness"][0] == len(train_examples):
+                break
+            errs_summary = "\n".join(best["errors"][:10]) if best["errors"] else "No explicit errors, only mismatches."
+            new_code = improve_python(llm, tokenizer, best["code"], train_examples, errs_summary, cfg)
+            new_fit, new_errs, new_traces = score_python_on_train(new_code, train_examples, cfg)
+            cand = {"code": new_code, "fitness": new_fit, "errors": new_errs, "traces": new_traces}
+            history.append(cand)
+            if cand["fitness"] > best["fitness"]:
+                best = cand
+        return best, history
+
+    # 3) Funnel schedule starting from top_k
+    initial_pool = scored[: min(s.top_k, len(scored))]
+
+    # Interpret schedule:
+    # - If user provided keeps/rounds starting with top_k, use as-is.
+    # - Else: prepend stage (keep=top_k, rounds=1) to implement:
+    #   "take top_k and improve them once" as the first stage.
+    stage_keeps = list(s.py_rev_stage_keeps)
+    stage_rounds = list(s.py_rev_stage_rounds)
+
+    if len(stage_keeps) != len(stage_rounds):
+        raise ValueError("py_rev_stage_keeps and py_rev_stage_rounds must have same length")
+
+    if not stage_keeps or stage_keeps[0] != s.top_k:
+        stage_keeps = [s.top_k] + stage_keeps
+        stage_rounds = [1] + stage_rounds
+
+    # Run staged revision
+    revised_pool, revised_history = _stagewise_revise_python_candidates(
+        llm=llm,
+        tokenizer=tokenizer,
+        candidates=[
+            {"code": c["code"], "fitness": c["fitness"], "errors": c["errors"], "traces": c["traces"]}
+            for c in initial_pool
+        ],
+        train_examples=train_examples,
+        cfg=cfg,
+        stage_keeps=stage_keeps,
+        stage_rounds=stage_rounds,
+    )
+
+    history.extend(revised_history)
+    revised_pool.sort(key=lambda x: (x["fitness"][0], x["fitness"][1]), reverse=True)
+    if revised_pool and revised_pool[0]["fitness"] > best["fitness"]:
+        best = revised_pool[0]
 
     return best, history
 
@@ -940,21 +1172,21 @@ def main():
 
     cfg = RunConfig(
         instruction=GenPhaseConfig(
-            think_tokens=5000,
-            think_temp=1,
+            think_tokens=6000,
+            think_temp=1.1,
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=1400,
             answer_temp=0.5,
             answer_top_p=1.0,
         ),
-        executor=GenPhaseConfig(
-            think_tokens=2048,
-            think_temp=0.7,
+        executor=GenPhaseConfig( # low thinking!!
+            think_tokens=1500,
+            think_temp=0.5,
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=1400,
-            answer_temp=0.2,
+            answer_temp=0.3,
             answer_top_p=1.0,
         ),
         python=GenPhaseConfig(
@@ -963,25 +1195,25 @@ def main():
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=2600,
-            answer_temp=0.15,
+            answer_temp=0.3,
             answer_top_p=1.0,
         ),
         python_revision=GenPhaseConfig(
             think_tokens=2048,
-            think_temp=0.75,
+            think_temp=1,
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=2600,
-            answer_temp=0.15,
+            answer_temp=0.3,
             answer_top_p=1.0,
         ),
         pool=GenPhaseConfig(
             think_tokens=2048,
-            think_temp=0.8,
+            think_temp=1,
             think_top_p=0.95,
             think_top_k=20,
             answer_tokens=1400,
-            answer_temp=0.2,
+            answer_temp=0.3,
             answer_top_p=1.0,
         ),
         search=SearchConfig(
@@ -989,24 +1221,31 @@ def main():
             top_k=20,
             n_individual_revisions=15,
             n_pool_revisions=15,
-            py_n_candidates=40,
+            py_n_candidates=20,
             py_revision_steps=15,
+
+            rev_stage_keeps=[8, 5, 2],
+            rev_stage_rounds=[1, 2, 4],
+
+            py_rev_stage_keeps=[8, 5, 2],
+            py_rev_stage_rounds=[1, 2, 4],
         ),
         batch=BatchConfig(
             mini_batch_init=20,
             mini_batch_revisions=15,
             mini_batch_py=20,
+            mini_batch_exec=20,   # NEW
         ),
         timeout=TimeoutConfig(
-            python_train_timeout_s=2.5,
-            python_test_timeout_s=2.5,
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
         ),
         pad_value=-1,
+
     )
 
     df = create_data_frame(test_run=True, pad_value=cfg.pad_value)
-    df = df.iloc[[0]]
-    #, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309
+    df = df.iloc[[0, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309]]
 
     src_dir = Path(__file__).resolve().parent
     output_dir = src_dir / "output"

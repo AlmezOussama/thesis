@@ -1,32 +1,11 @@
 import pandas as pd
-from pathlib import Path
-import csv
 
+df = pd.read_csv("eng_py/15rev6ktokens.csv")
 
-def check_true_results(file=""):
-    src_dir = Path(__file__).resolve().parent
-    output_dir = src_dir / "qwen8"
+# extract only the needed columns
+result = df[["file_name", "match"]]
 
-    final_rows = []
+# save to new csv
+result.to_csv("filename_match.csv", index=False)
 
-    for file in output_dir.iterdir():
-        if file.is_file() and file.suffix == ".csv":
-            df = pd.read_csv(file)
-            task_groups = df.groupby("file_name")
-
-            for task, task_df in task_groups:
-                true_rows = task_df[task_df["match"] == True]
-                if len(true_rows) > 0:
-                    first_true = true_rows.iloc[0]
-                    sample_id = first_true["sample_id"]
-                    final_rows.append([file.name, task, sample_id])
-
-    with open("true_tasks.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["csv_file", "task", "sample_id"])
-        for row in final_rows:
-            writer.writerow(row)
-
-
-if __name__ == "__main__":
-    check_true_results("")
+print(result)

@@ -1,0 +1,1018 @@
+Logging to: /home/omeziani/thesis/src/output/runlog_20260228_051949.txt
+RUN CONFIG:
+{
+  "batch": {
+    "mini_batch_init": 10,
+    "mini_batch_py": 5,
+    "mini_batch_revisions": 5
+  },
+  "empty_grid": [
+    [
+      -1
+    ]
+  ],
+  "executor": {
+    "answer_temp": 0.2,
+    "answer_tokens": 1000,
+    "answer_top_p": 1.0,
+    "think_temp": 0.7,
+    "think_tokens": 500,
+    "think_top_k": 20,
+    "think_top_p": 0.95
+  },
+  "instruction": {
+    "answer_temp": 0.5,
+    "answer_tokens": 1400,
+    "answer_top_p": 1.0,
+    "think_temp": 1.4,
+    "think_tokens": 4096,
+    "think_top_k": 20,
+    "think_top_p": 0.95
+  },
+  "pad_value": -1,
+  "pool": {
+    "answer_temp": 0.2,
+    "answer_tokens": 1400,
+    "answer_top_p": 1.0,
+    "think_temp": 0.8,
+    "think_tokens": 2048,
+    "think_top_k": 20,
+    "think_top_p": 0.95
+  },
+  "python": {
+    "answer_temp": 0.15,
+    "answer_tokens": 2600,
+    "answer_top_p": 1.0,
+    "think_temp": 1.2,
+    "think_tokens": 4096,
+    "think_top_k": 20,
+    "think_top_p": 0.95
+  },
+  "python_revision": {
+    "answer_temp": 0.15,
+    "answer_tokens": 2600,
+    "answer_top_p": 1.0,
+    "think_temp": 0.75,
+    "think_tokens": 2048,
+    "think_top_k": 20,
+    "think_top_p": 0.95
+  },
+  "search": {
+    "n_individual_revisions": 5,
+    "n_init": 20,
+    "n_pool_revisions": 5,
+    "py_n_candidates": 5,
+    "py_rev_stage_keeps": [
+      10,
+      3,
+      1
+    ],
+    "py_rev_stage_rounds": [
+      1,
+      2,
+      3
+    ],
+    "py_revision_steps": 5,
+    "rev_stage_keeps": [
+      10,
+      5,
+      2
+    ],
+    "rev_stage_rounds": [
+      1,
+      2,
+      3
+    ],
+    "top_k": 10
+  },
+  "timeout": {
+    "python_test_timeout_s": 2.0,
+    "python_train_timeout_s": 2.0
+  }
+}
+Running FULL English→Python evolution pipeline on 24 tasks...
+
+====================================================================================================
+TASK: 00576224
+Train examples: 2
+Best English fitness (exact, cell_sum): (2, 200.0)
+Best instruction:
+Take the input 2x2 matrix. Let p, q, r, s be the elements such that the matrix is [[p, q], [r, s]]. Output a 6x6 matrix where:
+- Rows 0 and 4: for each column index j (0 to 5), if j is even, output p; if j is odd, output q.
+- Rows 1 and 5: for each column index j (0 to 5), if j is even, output r; if j is odd, output s.
+- Rows 2 and 3: 
+  - If q == r, then for row 2: for each j, if j even, output r; if j odd, output p.
+    For row 3: for each j, if j even, output s; if j odd, output r.
+  - Else, for row 2: for each j, if j even, output q; if j odd, output p.
+    For row 3: for each j, if j even, output s; if j odd, output r.
+Best Python fitness (exact, cell_sum): (2, 200.0)
+Best Python code preview:
+def transform(grid):
+    p, q = grid[0]
+    r, s = grid[1]
+    res = [[0] * 6 for _ in range(6)]
+    row0 = [p if j % 2 == 0 else q for j in range(6)]
+    res[0] = row0
+    res[4] = row0.copy()
+    row1 = [r if j % 2 == 0 else s for j in range(6)]
+    res[1] = row1
+    res[5] = row1.copy()
+    if q == r:
+        row2 = [r if j % 2 == 0 else p for j in range(6)]
+        row3 = [s if j % 2 == 0 else r for j in range(6)]
+    else:
+        row2 = [q if j % 2 == 0 else p for j in range(6)]
+        row3 = [s if j % 2 == 0 else r for j in range(6)]
+    res[2] = row2
+    res[3] = row3
+    return res
+TEST: mode=python match=True acc=100.00
+
+====================================================================================================
+TASK: 762cd429
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 137.5595238095238)
+Best instruction:
+For each row in the input grid, identify the first two non-zero values (if any). For the output grid, generate a pattern where each row starts with a number of leading zeros equal to (first_non_zero_row_index - current_row_index) mod grid_width, followed by each identified value repeated four times consecutively. The pattern repeats every 8 columns, and the leading zeros decrease as the row index increases, aligning with the input's non-zero rows.
+Best Python fitness (exact, cell_sum): (0, 0.0)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    # Find the first row with at least two non-zero values
+    first_non_zero_row = None
+    for i in range(H):
+        row = grid[i]
+        # Find first two non-zero values
+        non_zero = []
+        for j in range(W):
+            if row[j] != 0:
+                non_zero.append(row[j])
+                if len(non_zero) == 2:
+                    break
+        if len(non_zero) == 2:
+            first_non_zero_row = i
+            break
+    
+    # If no such row, all rows are zero
+    if first_non_zero_row is None:
+        return [[0] * W for _ in range(H)]
+    
+    # For each row i in output
+    output = [[0] * W for _ in range(H)]
+    
+    # For each row i, compute leading zeros count
+    for i in range(H):
+        # leadin
+Python failed on test (SyntaxError('unterminated string literal (detected at line 132)', ('<string>', 132, 18, "        Now, what's the relation between i and Z?", 132, 18))); fallback to English executor.
+TEST: mode=english_fallback match=False acc=0.00
+
+====================================================================================================
+TASK: 0607ce86
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 235.69503618910733)
+Best instruction:
+For each row in the input grid, determine if it is a valid pattern row by checking if it contains at least one non-zero number that is not 3. If it does, identify the base number for the row as the most frequent non-zero number that is not 3 in that row. If there are multiple non-zero numbers (not 3), choose the one that appears in the output pattern for the example (but this is not deterministic). 
+
+Instead, the correct deterministic approach from the examples is:
+
+  The output grid will have exactly two types of non-zero rows (as per the examples):
+    Type A: a fixed pattern with a sequence of numbers (which may include 3) that is the same for all rows of this type.
+    Type B: another fixed pattern.
+
+  But the problem states that the instruction must be deterministic and explicit.
+
+After careful thought, the following instruction is derived from the examples and the user's reexamination:
+
+  Step 1: Identify the distinct non-zero, non-3 numbers that appear in the grid. Call this set S.
+
+  Step 2: For each number x in S, we will create a fixed output row template for type x. How? 
+      - In the examples, the template for a type x is not a single row but a pattern that is fixed p...
+Best Python fitness (exact, cell_sum): (1, 224.79338842975204)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    output = [[0] * W for _ in range(H)]
+    
+    for i in range(H):
+        row = grid[i]
+        non_zero_non_3 = [num for num in row if num != 0 and num != 3]
+        if not non_zero_non_3:
+            continue
+        
+        # Find the most frequent non-zero non-3 number without using Counter
+        max_count = 0
+        most_common = 0
+        for num in non_zero_non_3:
+            count = non_zero_non_3.count(num)
+            if count > max_count:
+                max_count = count
+                most_common = num
+        
+        # Determine the pattern based on most_common
+        if most_common == 6:
+            # Pattern for 6: [0,0,6,6,6,6,6,6,0,0,6,6,6,6,6,6,0,0,0,0,0,0]
+            pattern = [0, 0, 6, 6, 6, 6, 6, 6
+TEST: mode=python match=False acc=66.48
+
+====================================================================================================
+TASK: 358ba94e
+Train examples: 4
+Best English fitness (exact, cell_sum): (1, 348.0)
+Best instruction:
+Extract the 5x5 grid from the input starting at row 1, column 2 (0-based), with the first row being the top row of the output.
+Best Python fitness (exact, cell_sum): (0, 244.0)
+Best Python code preview:
+def transform(grid):
+    # Extract 5x5 grid starting at row 1, column 2 (0-based)
+    # Rows: 1 to 5 (0-based), columns: 2 to 6 (0-based)
+    return [row[2:7] for row in grid[1:6]]
+TEST: mode=python match=False acc=40.00
+
+====================================================================================================
+TASK: 55059096
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 291.48580586080584)
+Best instruction:
+For each cell in the grid, if it is 0 and there exists a 3 in the cell's top-left diagonal (i.e., the cell at row-1, column-1) and a 3 in the cell's bottom-right diagonal (i.e., the cell at row+1, column+1), then set it to 2. Otherwise, keep it as 0 or 3.
+Best Python fitness (exact, cell_sum): (0, 291.48580586080584)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    new_grid = [[0] * W for _ in range(H)]
+    for i in range(H):
+        for j in range(W):
+            if grid[i][j] != 0:
+                new_grid[i][j] = grid[i][j]
+            else:
+                top_left_ok = i - 1 >= 0 and j - 1 >= 0
+                bottom_right_ok = i + 1 < H and j + 1 < W
+                top_left_val = grid[i-1][j-1] if top_left_ok else None
+                bottom_right_val = grid[i+1][j+1] if bottom_right_ok else None
+                if top_left_val == 3 and bottom_right_val == 3:
+                    new_grid[i][j] = 2
+                else:
+                    new_grid[i][j] = 0
+    return new_grid
+TEST: mode=python match=False acc=96.38
+
+====================================================================================================
+TASK: e7639916
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 239.34527972027973)
+Best instruction:
+For each input grid, identify all positions (i, j) where the value is 8. Compute min_i = minimum row index, max_i = maximum row index, min_j = minimum column index, max_j = maximum column index among these 8s. Then, for each row i from min_i to max_i (inclusive): - If i == min_i: set all columns j from min_j to max_j to 1, except the cells that originally had 8s remain 8. - If i == max_i: set all columns j from min_j to max_j to 1, except the cells that originally had 8s remain 8. - Else (i between min_i and max_i, exclusive): set column j = min_j to 1 (if not an 8) and column j = max_j to 1 (if not an 8). All other cells remain unchanged from input. Note: The 8s themselves are not changed; only the surrounding cells are set to 1 in the specified pattern.
+Best Python fitness (exact, cell_sum): (3, 300.0)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    min_i = float('inf')
+    max_i = float('-inf')
+    min_j = float('inf')
+    max_j = float('-inf')
+    has_eight = False
+    
+    for i in range(H):
+        for j in range(W):
+            if grid[i][j] == 8:
+                has_eight = True
+                min_i = min(min_i, i)
+                max_i = max(max_i, i)
+                min_j = min(min_j, j)
+                max_j = max(max_j, j)
+    
+    if not has_eight:
+        return grid  # No 8s, so no changes. But problem examples have 8s, but to be safe.
+    
+    new_grid = [row[:] for row in grid]
+    
+    for i in range(min_i, max_i + 1):
+        if i == min_i or i == max_i:
+            for j in range(min_j, max_j + 1):
+                if new_grid[i][j] != 8:
+          
+TEST: mode=python match=True acc=100.00
+
+====================================================================================================
+TASK: 09c534e7
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 187.95987654320987)
+Best instruction:
+For each cell with value 2, 3, or 4 in the input, set the cell to the same value, and then for each adjacent cell (up, down, left, right), if it is 1, set it to the same value as the special cell. But in the output, the special cells themselves are kept, and neighbors become the special value.
+
+Let's test.
+
+In first example, input row 4, index 14: value 2.
+
+Adjacent cells: up, down, left, right.
+
+In the grid, row 4 is index 4 (0-based).
+
+Assume rows and columns start from 0.
+
+Input row 4: [0,0,0,0,0,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0]
+
+So at (4,14): 2
+
+Left: (4,13):1, right: (4,15):1
+
+Up: row 3, col 14: input row 3: [0,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,0,0,0,0,0,1,1,1,1,0,0,0,0] so col 14:1 (since 0-based, index 14)
+
+Similarly, down: row 5, col 14: input row 5: [0,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,0,0,0,0,0,1,1,1,1,0,0,0,0] col 14:1
+
+In output, for row 4: [0,0,0,0,0,1,2,1,1,1,1,1,1,2,2,2,1,1,1,1,1,1,1,2,2,1,0,0,0,0] so at col 13:2, col 14:2, col 15:2
+
+Input had col 13:1, col 14:2, col 15:1
+
+Output has col 13:2, col 14:2, col 15:2
+
+So the left and right neighbors became 2, and the cell itself is 2 (same).
+
+But in the output, it's not just the immediate neighbors; there ar...
+Best Python fitness (exact, cell_sum): (0, 277.71913580246917)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    output = [row[:] for row in grid]  # copy the grid
+    
+    for i in range(H):
+        for j in range(W):
+            if grid[i][j] in (2, 3, 4):
+                for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    ni, nj = i + di, j + dj
+                    if 0 <= ni < H and 0 <= nj < W and grid[ni][nj] == 1:
+                        output[ni][nj] = grid[i][j]
+    return output
+TEST: mode=python match=False acc=85.67
+
+====================================================================================================
+TASK: 0a1d4ef5
+Train examples: 3
+Best English fitness (exact, cell_sum): (1, 122.22222222222223)
+Best instruction:
+For each input grid (30x30), divide it into three regions: top (rows 0-9), middle (rows 10-19), and bottom (rows 20-29). For each region, find the value that has the largest contiguous block (by the length of the contiguous segment) in that region. Then, identify the three distinct values that have the largest contiguous blocks across the entire grid (i.e., the top 3 values by the maximum run length in the entire grid). For each of these three values, output a triplet: [the value's largest contiguous block length in the top region, the value's largest contiguous block length in the middle region, the value's largest contiguous block length in the bottom region]. However, the problem says "extract the value", not the length. 
+
+  But wait, the examples output the value (the number), not the length.
+
+  Correction: the problem says "extract the value", meaning the number that has the largest contiguous block in that region.
+
+  Revised:
+
+      Step 1: For the entire grid, for each number, find the maximum run length (contiguous segment) in the entire grid. Then take the top 3 numbers by this maximum run length (if there are ties, take the smallest number? but the examples don't show tie...
+Best Python fitness (exact, cell_sum): (0, 33.33333333333333)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    # Split the grid into top, middle, bottom regions (assuming grid has at least 20 rows)
+    top_region = grid[:10]
+    mid_region = grid[10:20]
+    bottom_region = grid[20:]
+    
+    # For each region, find the value with the largest contiguous run (horizontal)
+    def find_region_value(region):
+        max_run = -1
+        best_value = None
+        for row in region:
+            current_run = 1
+            current_val = row[0]
+            for j in range(1, len(row)):
+                if row[j] == current_val:
+                    current_run += 1
+                else:
+                    if current_run > max_run:
+                        max_run = current_run
+                        best_value = current_val
+                 
+TEST: mode=python match=False acc=16.67
+
+====================================================================================================
+TASK: 1c0d0a4b
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 247.76828110161443)
+Best instruction:
+For each cell in the input grid that contains 8, set the cell to the left and the cell to the right (if within bounds) in the output grid to 2, but only if those cells were 0 in the input. The output grid is initialized to all 0s, and the input 8s are replaced with 0s in the output.
+Best Python fitness (exact, cell_sum): (0, 246.05887939221273)
+Best Python code preview:
+def transform(grid):
+    rows = len(grid)
+    cols = len(grid[0])
+    output = [[0] * cols for _ in range(rows)]
+    
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 8:
+                # Check left neighbor
+                if j - 1 >= 0 and grid[i][j-1] == 0:
+                    output[i][j-1] = 2
+                # Check right neighbor
+                if j + 1 < cols and grid[i][j+1] == 0:
+                    output[i][j+1] = 2
+    return output
+TEST: mode=python match=False acc=79.29
+
+====================================================================================================
+TASK: 310f3251
+Train examples: 5
+Best English fitness (exact, cell_sum): (1, 229.1701940035273)
+Best instruction:
+For each input cell at (i, j) (where i is row index and j is column index), generate a 3x3 block in the output grid starting at row 3*i and column 3*j. The block is defined as follows:
+
+- The top row (row 0 of the block) is [0, 2, 0].
+- The middle row (row 1 of the block) is [input[i][j], input[i][j], input[i][j]].
+- The bottom row (row 2 of the block) is [input[i][j], input[i][j], input[i][j]].
+
+Wait, but that doesn't match example1.
+
+In example1, input cell (0,0) is 0. The block for (0,0) would be:
+
+row0: [0,2,0]
+row1: [0,0,0]
+row2: [0,0,0]
+
+But the correct output for (0,0) block (top-left 3x3) is:
+
+[0,2,0]
+[0,0,6]
+[6,0,0]
+
+So this approach is wrong.
+
+Alternative approach based on example1:
+
+The correct output for example1 shows that for each input row i, the output has:
+
+- Output row 3*i: for each j, [0,2,0] → so the entire row is [0,2,0] repeated C times (C = number of columns in input)
+- Output row 3*i +1: input row (i+1) repeated C times (each input row's elements repeated once per block)
+- Output row 3*i +2: input row (i+2) repeated C times
+
+But in example1, input has 3 rows. So for i=0:
+
+- row 0: [0,2,0] *3
+- row 1: input row 1 *3 (each element repeated once per block)
+- ro...
+Best Python fitness (exact, cell_sum): (0, 326.83950617283955)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    output = [[0] * (3 * W) for _ in range(3 * H)]
+    
+    for i in range(H):
+        for j in range(W):
+            # Top row of block (row 3*i) for this block: [0, 2, 0]
+            output[3*i][3*j] = 0
+            output[3*i][3*j+1] = 2
+            output[3*i][3*j+2] = 0
+            
+            # Middle row (row 3*i+1): [grid[i][j], grid[i][j], grid[i][j]]
+            output[3*i+1][3*j] = grid[i][j]
+            output[3*i+1][3*j+1] = grid[i][j]
+            output[3*i+1][3*j+2] = grid[i][j]
+            
+            # Bottom row (row 3*i+2): [grid[i][j], grid[i][j], grid[i][j]]
+            output[3*i+2][3*j] = grid[i][j]
+            output[3*i+2][3*j+1] = grid[i][j]
+            output[3*i+2][3*j+2] = grid[i][j]
+    
+    return 
+TEST: mode=python match=False acc=62.50
+
+====================================================================================================
+TASK: 692cd3b6
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 202.66666666666666)
+Best instruction:
+For each cell in the grid that is 0, if it is in the same row or column as a 5 that is part of a 2-pattern (i.e., a 5 with 2s directly above, below, to the left, and to the right), set the cell to 4. Additionally, identify all 2-patterns (each containing a 5 surrounded by 2s in all four orthogonal directions). Let R_min be the minimum row index of all such 2-patterns, R_max be the maximum row index, C_min be the minimum column index, and C_max be the maximum column index. Then, for all cells in the rectangle from row R_min to R_max and column C_min to C_max that are 0, set them to 4.
+Best Python fitness (exact, cell_sum): (0, 202.22222222222223)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    # First, find all 2-patterns (5s with 2s in all four directions)
+    patterns = []  # list of (r, c) for each 2-pattern center (the 5)
+    for r in range(H):
+        for c in range(W):
+            if grid[r][c] == 5:
+                # Check if all four neighbors are 2
+                up = grid[r-1][c] if r-1 >= 0 else None
+                down = grid[r+1][c] if r+1 < H else None
+                left = grid[r][c-1] if c-1 >= 0 else None
+                right = grid[r][c+1] if c+1 < W else None
+                if up == 2 and down == 2 and left == 2 and right == 2:
+                    patterns.append((r, c))
+    
+    # If there are no 2-patterns, then R_min, R_max, etc. are undefined. But the problem says to do the second st
+TEST: mode=python match=False acc=65.33
+
+====================================================================================================
+TASK: 1da012fc
+Train examples: 2
+Best English fitness (exact, cell_sum): (0, 183.30143540669854)
+Best instruction:
+For each cell in the grid, if the input value is non-zero and not 5, replace it with (input value - 5) if the cell is in the left half of the grid (columns 0 to floor((N-1)/2)), otherwise replace it with (input value - 6) if in the right half (columns floor((N+1)/2) to N-1). Otherwise, leave the cell unchanged.
+Best Python fitness (exact, cell_sum): (0, 183.06903622693096)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    L = (W - 1) // 2
+    R = (W + 1) // 2
+    result = [[0] * W for _ in range(H)]
+    for i in range(H):
+        for j in range(W):
+            val = grid[i][j]
+            if val != 0 and val != 5:
+                if j < L:
+                    result[i][j] = val - 6
+                else:
+                    result[i][j] = val - 5
+            else:
+                result[i][j] = val
+    return result
+TEST: mode=python match=False acc=90.53
+
+====================================================================================================
+TASK: 66e6c45b
+Train examples: 2
+Best English fitness (exact, cell_sum): (2, 200.0)
+Best instruction:
+For a 4x4 input grid, extract the non-zero elements from row 1 (0-based) at columns 1 and 2 (0-based) as the first and second elements. Place these elements into the output's row 0 as [element1, 0, 0, element2]. Similarly, extract the non-zero elements from row 2 (0-based) at columns 1 and 2 (0-based) as the first and second elements, and place them into the output's row 3 as [element3, 0, 0, element4]. All other rows in the output grid are filled with zeros.
+Best Python fitness (exact, cell_sum): (2, 200.0)
+Best Python code preview:
+def transform(grid):
+    output = [[0] * 4 for _ in range(4)]
+    output[0][0] = grid[1][1]
+    output[0][3] = grid[1][2]
+    output[3][0] = grid[2][1]
+    output[3][3] = grid[2][2]
+    return output
+TEST: mode=python match=True acc=100.00
+
+====================================================================================================
+TASK: 3194b014
+Train examples: 3
+Best English fitness (exact, cell_sum): (2, 200.0)
+Best instruction:
+Find the largest contiguous rectangular block of identical digits in the input grid that has at least 5 rows and 5 columns. Then, extract the top-left 3x3 subgrid from this block and output it as a 3x3 grid with all elements equal to that digit.
+Best Python fitness (exact, cell_sum): (2, 200.0)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    max_area = 0
+    best_digit = None
+    best_r = None
+    best_c = None
+    
+    # For each digit, find the largest rectangle with at least 5x5
+    for d in set():
+        # We'll iterate through the grid to find rectangles of d
+        # But this approach may not be efficient, but given the problem constraints (small grid in examples)
+        pass
+    
+    # Alternative approach: look for 5x5 blocks. Since examples have 5x5, and the problem says "at least 5x5", but the largest block is 5x5 in examples.
+    # Let's try to find the first 5x5 block of a digit that is the largest.
+    # But the problem says "largest", so we need to find the one with max area.
+    
+    # Another idea: the problem's examples all have a 5x5 block of 
+TEST: mode=python match=False acc=0.00
+
+====================================================================================================
+TASK: 963f59bc
+Train examples: 4
+Best English fitness (exact, cell_sum): (0, 371.1813439086166)
+Best instruction:
+For each non-zero cell in the input grid, if the cell value is a digit (1-9), then add the same digit to all adjacent cells in the downward direction until a boundary is reached, but only if the adjacent cell is zero. However, this doesn't seem consistent with the examples.
+
+Let's think differently.
+
+I recall that in ARC tasks, one common transformation is to add a "copy" of the shape below or to the right.
+
+But in the examples, the shapes are being completed.
+
+Another idea: the number represents a "seed" for a shape, and the output adds the shape by mirroring or extending it.
+
+Let's look at the third example, which is clearer.
+
+Third example input:
+- Rows 1-4 have a "1" shape (like a digit 1 without the top bar)
+- Row 8 has a single "2" at col5
+
+Output:
+- The "2" shape is added starting from row7: [0,0,0,2,0,0,...] so row7 col3 is 2
+- Row8: [0,0,2,2,2,2,2,0,...] so col2 to 6 are 2
+- Row9: [0,0,2,0,2,0,...] col2 and 4
+- Row10: [0,0,0,0,2,0,...] col4
+
+So the input "2" at (8,5) is used to create a "2" shape centered below it? (8,5) is row8 col5.
+
+In output, the shape has:
+- Row7: col3 (which is 2 positions left)
+- Row8: col2-6 (width 5)
+- Row9: col2 and 4 (so like a 2 with a diagonal...
+Best Python fitness (exact, cell_sum): (0, 325.1051978324706)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    result = [row[:] for row in grid]
+    
+    for r in range(H):
+        for c in range(W):
+            if grid[r][c] != 0:
+                d = grid[r][c]
+                # Propagate upwards (to rows above) instead of downwards
+                for i in range(r-1, -1, -1):
+                    if result[i][c] == 0:
+                        result[i][c] = d
+                    else:
+                        break
+    return result
+TEST: mode=python match=False acc=87.50
+
+====================================================================================================
+TASK: d37a1ef5
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 248.48484848484847)
+Best instruction:
+For each cell in the grid, if the cell is 0 and it is inside the outermost border of 2s (i.e., not on the grid boundary and not directly adjacent to the grid boundary), and there is no 5 in the same row or column within the inner region, then set it to 2. However, this is not quite right because in the output, many 0s become 2s even if there are 5s nearby.
+
+Let's think of the inner region as the area bounded by the 2s. In the input, the 2s form a rectangle with a hole inside where the 0s are with some 5s.
+
+The output fills the hole with 2s, but the 5s remain as 5s.
+
+In the first example, the hole is filled except for the positions of 5s.
+
+Similarly in second example.
+
+In the output, for the inner part, all cells that were 0 are now 2 except where there is a 5.
+
+In first output, row3 has 0s at col4 and col5, but those are not 5s, so they should be 2s? But in output they are 0.
+
+In first output row3: [0,2,2,5,0,0,5,2,2,0,0] so col4 and col5 are 0, which were 0 in input.
+
+Why are they not 2?
+
+Perhaps because they are "between" the 5s or something.
+
+Another idea: the 5s are like obstacles that prevent filling, so the area around 5s is not filled.
+
+But in this case, the 0s that are adja...
+Best Python fitness (exact, cell_sum): (0, 290.9090909090909)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    # Find the minimal rectangle that contains all 2s (the border)
+    top = H
+    bottom = -1
+    left = W
+    right = -1
+    
+    for r in range(H):
+        for c in range(W):
+            if grid[r][c] == 2:
+                if r < top:
+                    top = r
+                if r > bottom:
+                    bottom = r
+                if c < left:
+                    left = c
+                if c > right:
+                    right = c
+    
+    # The inner region is the area strictly inside this rectangle (top+1 to bottom-1, left+1 to right-1)
+    inner_top = top + 1
+    inner_bottom = bottom - 1
+    inner_left = left + 1
+    inner_right = right - 1
+    
+    # If there's no inner region, return the grid as is
+    if inn
+TEST: mode=python match=False acc=92.31
+
+====================================================================================================
+TASK: 3979b1a8
+Train examples: 2
+Best English fitness (exact, cell_sum): (0, 177.0)
+Best instruction:
+Given a 5x5 input matrix, generate a 10x10 output matrix as follows:  
+1. Top-left 5x5 (rows 0-4, columns 0-4): Copy the input matrix directly.  
+2. Top-right 5x5 (rows 0-4, columns 5-9): For each row, append the sequence `[input[0][0], input[2][2], input[1][1], input[0][4], input[2][2]]`.  
+3. Bottom-left 5x5 (rows 5-9, columns 0-4): For row 5, all elements = `input[0][0]`; row 6, all elements = `input[2][2]`; row 7, all elements = `input[1][1]`; row 8, all elements = `input[0][0]`; row 9, all elements = `input[2][2]`.  
+4. Bottom-right 5x5 (rows 5-9, columns 5-9): For row 5, append `[input[2][2], input[2][2], input[1][1], input[0][4], input[2][2]]`; for row 6, append `[input[2][2], input[1][1], input[1][1], input[0][4], input[2][2]]`; for row 7, append `[input[1][1], input[1][1], input[0][4], input[0][4], input[2][2]]`; for row 8, append `[input[0][0], input[0][0], input[0][0], input[0][4], input[0][4]]`; for row 9, append `[input[2][2], input[2][2], input[2][2], input[2][2], input[2][2]]`.
+Best Python fitness (exact, cell_sum): (0, 194.0)
+Best Python code preview:
+def transform(grid):
+    H, W = 5, 5
+    # Extract the required values from the input grid
+    a00 = grid[0][0]
+    a11 = grid[1][1]
+    a22 = grid[2][2]
+    a04 = grid[0][4]
+    
+    # Initialize the 10x10 output grid with zeros
+    output = [[0] * 10 for _ in range(10)]
+    
+    # Top-left 5x5 (rows 0-4, cols 0-4)
+    for i in range(5):
+        for j in range(5):
+            output[i][j] = grid[i][j]
+    
+    # Top-right 5x5 (rows 0-4, cols 5-9)
+    top_right_seq = [a00, a22, a11, a04, a22]
+    for i in range(5):
+        for j in range(5, 10):
+            output[i][j] = top_right_seq[j - 5]
+    
+    # Bottom-left 5x5 (rows 5-9, cols 0-4)
+    bottom_left = [
+        [a00] * 5,  # row5
+        [a22] * 5,  # row6
+        [a11] * 5,  # row7
+        [a00] * 5,  # row8
+        [a22] * 5   # ro
+TEST: mode=python match=False acc=97.00
+
+====================================================================================================
+TASK: f3cdc58f
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 255.0)
+Best instruction:
+For each column, find the minimum row index where the input has a non-zero value. Then, for each row from that minimum row to the bottom row (row 9), set the output value in that column to the sequence 1,2,3,4 starting from the top of the sequence. Specifically, for a given column, let r_min be the min row with non-zero in input. Then for row i from r_min to 9, output[i][col] = (i - r_min + 1) if (i - r_min + 1) <= 4, else 0. But in the output, it's not exactly that.
+
+In first example, for col 0, min row with non-zero is row 2 (value 2).
+
+Then for row 2: i=2, i - r_min +1 = 2-2+1=1
+
+Row 3: 3-2+1=2
+
+Row 4: 3
+
+Row 5: 4
+
+But in output, row 2 col 0 is 1, row 3 col 0 is 1, not 2. Output row 2: [1,0,0,0,...] so col0=1, row3: [1,0,0,0,...] col0=1, so it's all 1 for col0 from row2 to row9.
+
+Not increasing.
+
+In output, for col0, it's 1 for all rows from 2 to 9.
+
+For col1, output has 2 for rows 6 to 9.
+
+Input col1: row4=4, row9=1 — min row with non-zero is row4 (4).
+
+But output col1 has 2 from row6 to 9.
+
+Not matching.
+
+Perhaps it's based on the value, not the row.
+
+Another idea: the numbers 1,2,3,4 in the output represent the "depth" or "level" from the bottom.
+
+Let's consider the bottom ro...
+Best Python fitness (exact, cell_sum): (0, 0.0)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    # For each column, find the first row where input has non-zero
+    first_non_zero = [10] * W  # initialize to a high value (row 10, since rows 0-9)
+    for col in range(W):
+        for row in range(H):
+            if grid[row][col] != 0:
+                first_non_zero[col] = row
+                break
+    
+    # Now, for each row in output, we want to have a sequence of 1,2,3,4 starting from the top
+    # But the examples show that for each column, the output starts at first_non_zero[col] and then has a constant value (1,2,3,4) for the next rows.
+    # Wait, no. In the first example, col0 has first_non_zero=2, and output for col0 is 1 from row2 to 9.
+    # So for each column c, the output value for row i (i >= first_non_zero[c]
+Python failed on test (bad_or_none_return); fallback to English executor.
+TEST: mode=english_fallback match=False acc=77.00
+
+====================================================================================================
+TASK: 85fa5666
+Train examples: 4
+Best English fitness (exact, cell_sum): (1, 183.33333333333331)
+Best instruction:
+For each non-zero cell that is not part of a 2x2 block of 2s, move its value to a diagonal line such that the diagonal starts from the top-left or bottom-right depending on the value, and extends for a certain number of steps. Specifically, for a value at (r, c) in the input, if it is a single cell (not in a 2x2 block), then in the output, it appears on the diagonal where row - col = r - c for values that are "diagonally down-right", or row + col = r + c for "diagonally up-left", but from the examples, it's consistent with the following: the value is placed on a diagonal starting from a specific point and going in the direction opposite to the source. More precisely, the transformation is to create a diagonal of the value where the difference row - col is constant for the first example, but it's messy.
+
+Let's find a common pattern.
+
+From the first example:
+
+- Input (2,2): 3 → output at (0,7), (1,6), (2,5) : so row + col = 7
+
+- Input (2,5): 6 → output at (5,5), (6,6), (7,7), (8,8) : row - col = 0
+
+- Input (5,2): 8 → output at (0,0), (1,1), (2,2) : row - col = 0
+
+- Input (5,5): 7 → output at (5,2), (6,1), (7,0) : col = 7 - row? For row=5, col=2; row=6, col=1; row=7, col=0; so col = 7...
+Best Python fitness (exact, cell_sum): (0, 219.3287037037037)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    # Step 1: Identify 2x2 blocks of 2s
+    block_cells = set()
+    for r in range(H-1):
+        for c in range(W-1):
+            if grid[r][c] == 2 and grid[r][c+1] == 2 and grid[r+1][c] == 2 and grid[r+1][c+1] == 2:
+                for dr in (0, 1):
+                    for dc in (0, 1):
+                        block_cells.add((r+dr, c+dc))
+    
+    # Step 2: Create output grid initialized to zeros
+    output = [[0] * W for _ in range(H)]
+    
+    # Step 3: Copy the 2x2 blocks to output
+    for r, c in block_cells:
+        output[r][c] = grid[r][c]
+    
+    # Step 4: Propagate non-block non-zero cells to diagonals
+    for r in range(H):
+        for c in range(W):
+            if grid[r][c] != 0 and (r, c) not in block_cells:
+
+TEST: mode=python match=False acc=48.44
+
+====================================================================================================
+TASK: a680ac02
+Train examples: 3
+Best English fitness (exact, cell_sum): (1, 116.66666666666666)
+Best instruction:
+Find all 4x4 contiguous subgrids in the input grid such that:
+  1. The perimeter (the outer boundary of the 4x4 subgrid) consists of non-zero values (i.e., the 4 elements on the top row, 4 on the bottom row, 4 on the left column, and 4 on the right column, excluding the corners which are shared, so total 12 elements? but typically we consider the ring: 4*4 - 4 = 12 elements? However, the problem says "outer boundary" -> meaning the ring of the 4x4 subgrid has 12 elements? But note: the problem says "the perimeter (outer boundary) consists of non-zero values". 
+
+  However, the examples: 
+      In the 2 pattern: the top row is [2,2,2,2] -> non-zero, bottom row [2,2,2,2] -> non-zero, left column [2,2,2,2] (but the corners are shared) -> actually the perimeter ring has 12 elements? 
+
+  But the problem says: "the inner 2x2 subgrid (center 2x2) is all zeros". 
+
+  Clarification: 
+      For a 4x4 subgrid starting at (i, j) (0-indexed), the subgrid covers rows [i, i+3] and columns [j, j+3].
+      The inner 2x2 is the subgrid from row i+1 to i+2 and column j+1 to j+2.
+
+  Steps for a candidate subgrid (i, j):
+      Condition 1: The perimeter (the outer ring) must be non-zero. 
+          This ...
+Best Python fitness (exact, cell_sum): (1, 200.0)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    blocks = []
+    # Iterate over all possible top-left corners of 4x4 subgrids
+    for i in range(H - 3):
+        for j in range(W - 3):
+            # Check perimeter (12 elements)
+            # Top row: (i, j), (i, j+1), (i, j+2), (i, j+3)
+            # Bottom row: (i+3, j), (i+3, j+1), (i+3, j+2), (i+3, j+3)
+            # Left column (middle): (i+1, j), (i+2, j)
+            # Right column (middle): (i+1, j+3), (i+2, j+3)
+            perimeter_ok = True
+            # Check top row
+            for col in range(j, j+4):
+                if grid[i][col] == 0:
+                    perimeter_ok = False
+                    break
+            if not perimeter_ok:
+                continue
+            # Check bottom row
+            for col
+TEST: mode=python match=False acc=55.56
+
+====================================================================================================
+TASK: b9630600
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 0.0)
+Best instruction:
+For each cell in the grid, if the cell is 3, set all adjacent cells (up, down, left, right) to 3. Otherwise, leave the cell as 0.
+Best Python fitness (exact, cell_sum): (0, 223.33333333333331)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    output = [[0] * W for _ in range(H)]
+    
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for i in range(H):
+        for j in range(W):
+            if grid[i][j] == 3:
+                for dx, dy in directions:
+                    ni, nj = i + dx, j + dy
+                    if 0 <= ni < H and 0 <= nj < W:
+                        output[ni][nj] = 3
+    return output
+TEST: mode=python match=False acc=69.67
+
+====================================================================================================
+TASK: 55783887
+Train examples: 5
+Best English fitness (exact, cell_sum): (0, 459.3462401795735)
+Best instruction:
+For each input grid, identify all positions of the number 1 and the number 6. Then, for the line segment connecting the topmost 1 and bottommost 1 (or leftmost and rightmost, depending on the slope), add the number 1 at every integer point along that line segment between them. Additionally, keep the existing 6 positions unchanged. The background number is the most common number in the grid, but the transformation only affects the positions with 1 and 6.
+Best Python fitness (exact, cell_sum): (2, 472.9924242424242)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    ones = []
+    for r in range(H):
+        for c in range(W):
+            if grid[r][c] == 1:
+                ones.append((r, c))
+    
+    if not ones:
+        return grid
+    
+    r1, c1 = min(ones, key=lambda x: x[0])
+    r2, c2 = max(ones, key=lambda x: x[0])
+    
+    dr = r2 - r1
+    dc = c2 - c1
+    
+    step_r = 1 if dr > 0 else -1
+    step_c = 1 if dc > 0 else -1
+    
+    points = []
+    r = r1
+    c = c1
+    points.append((r, c))
+    for i in range(1, abs(dr) + 1):
+        r = r1 + i * step_r
+        c = c1 + i * step_c
+        points.append((r, c))
+    
+    for r, c in points:
+        grid[r][c] = 1
+    
+    return grid
+Python failed on test (IndexError('list assignment index out of range')); fallback to English executor.
+TEST: mode=english_fallback match=False acc=91.78
+
+====================================================================================================
+TASK: c7d4e6ad
+Train examples: 2
+Best English fitness (exact, cell_sum): (2, 200.0)
+Best instruction:
+For each row in the grid, find the leftmost non-zero element and replace all 5s in that row with this element.
+Best Python fitness (exact, cell_sum): (2, 200.0)
+Best Python code preview:
+def transform(grid):
+    result = []
+    for row in grid:
+        x = None
+        for num in row:
+            if num != 0:
+                x = num
+                break
+        if x is not None:
+            new_row = [x if elem == 5 else elem for elem in row]
+        else:
+            new_row = row
+        result.append(new_row)
+    return result
+TEST: mode=python match=True acc=100.00
+
+====================================================================================================
+TASK: 4b6b68e5
+Train examples: 3
+Best English fitness (exact, cell_sum): (0, 150.34461152882204)
+Best instruction:
+For each connected region of non-zero cells that forms a rectangle with a constant boundary value B (i.e., the outer layer is B and the inner cells are non-B), replace all interior cells (those not on the boundary) with the value F, where F is the smallest non-zero value that appears in the input grid and is not B.
+Best Python fitness (exact, cell_sum): (0, 238.2250268528464)
+Best Python code preview:
+def transform(grid):
+    H = len(grid)
+    W = len(grid[0])
+    
+    non_zero = [x for row in grid for x in row if x != 0]
+    if not non_zero:
+        return grid
+    
+    non_zero_sorted = sorted(non_zero)
+    min_val = non_zero_sorted[0]
+    # Find the smallest value not equal to min_val (but we need F per B)
+    # However, the problem states F is the smallest non-zero not B. So for each B, F is the smallest non-zero not B.
+    # But the code needs to find all rectangles with boundary B and replace their interiors with F.
+    
+    # Alternative approach: The problem's examples suggest that the output fills the interior of the rectangles with the next smallest value after the boundary.
+    # For example, in the second example, the smallest non-zero is 2, so for B=2, F=3.
+    # So perhaps
+TEST: mode=python match=False acc=33.17
+
+Saved CSV to: /home/omeziani/thesis/src/output/final_20260228_051949.csv

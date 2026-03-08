@@ -370,16 +370,16 @@ def main():
     pad_value = -1
     df = create_data_frame(test_run=True, pad_value=pad_value)
     df = df.iloc[[0, 188, 5, 91, 136, 376, 188, 5, 91, 136, 376, 10, 11, 47, 78, 169, 52, 163, 79, 238, 336, 93, 399, 210, 263, 292, 138, 316, 118, 257, 388, 394, 357, 354, 275, 233, 276, 201, 385, 383, 43, 189, 3, 303, 309
-]]
+    ]]
     #
     MODEL_SUBDIR = "qwen_8b"
     CUDA_VISIBLE = "1"
 
     gen_cfg = TwoPhaseConfig(
         think_tokens=6000,
-        think_temp=1.2,
+        think_temp=1.05,
         think_top_p=0.95,
-        think_top_k=20,
+        #think_top_k=20,
         answer_tokens=2000,
         answer_temp=0.5,
         answer_top_p=1.0,

@@ -83,7 +83,7 @@ Feb 7
             top_p=0.95,
             max_tokens=8192,
 
-    berman english:
+berman english:
     cfg = RunConfig(
         instruction=GenPhaseConfig(
             think_tokens=4096,
@@ -191,4 +191,785 @@ Berman eng to py:
         pad_value=-1,
     )
 
+
+Berman english to python:
+    MODEL_SUBDIR = "q3_think_f8"
+    CUDA_VISIBLE = "0"
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=6000,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=15,
+            n_pool_revisions=15,
+            py_n_candidates=40,
+            py_revision_steps=20,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=15,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.5,
+            python_test_timeout_s=2.5,
+        ),
+        pad_value=-1,
+    )                                   //////////////////////////////////////////////// 13 true
+
+------------------------- high think temp 
+MODEL_SUBDIR = "q3_think_f8"
+    CUDA_VISIBLE = "0"
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=10,
+            n_pool_revisions=10,
+            py_n_candidates=20,
+            py_revision_steps=10,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=10,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.5,
+            python_test_timeout_s=2.5,
+        ),
+        pad_value=-1,
+    )
+
+                                      //////////////////////////////////////////////// 11t true
+
+    feb 16
+
+    ---------------------------------------------Think and revision at 1
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.5,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=10,
+            n_pool_revisions=10,
+            py_n_candidates=40,
+            py_revision_steps=10,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=10,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+    )
     
+
+    Feb 18 high think temp GPU 0
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=6000,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=10,
+            n_pool_revisions=10,
+            py_n_candidates=40,
+            py_revision_steps=10,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=10,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+        
+
+-------------------------------------------------------------------------------
+Feb 26 gpu 2
+
+cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=6000,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=10,
+            n_pool_revisions=10,
+            py_n_candidates=40,
+            py_revision_steps=10,
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=10,
+            mini_batch_py=20,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+
+    
+   --------------------------------- fbe 27 gpu 2 ----- 5090
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig( # low thinking!!
+            think_tokens=500,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1000,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=5,
+            n_pool_revisions=5,
+            py_n_candidates=5,
+            py_revision_steps=5,
+
+            rev_stage_keeps=[10, 5, 2],
+            rev_stage_rounds=[1, 2, 3],
+
+            py_rev_stage_keeps=[10, 3, 1],
+            py_rev_stage_rounds=[1, 2, 3],
+        ),
+        batch=BatchConfig(
+            mini_batch_init=10,
+            mini_batch_revisions=5,
+            mini_batch_py=5,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+
+   --------------------------------- fbe 27 gpu 1 ---- 4080
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig( # low thinking!!
+            think_tokens=1000,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=5,
+            n_pool_revisions=5,
+            py_n_candidates=5,
+            py_revision_steps=5,
+
+            rev_stage_keeps=[10, 5, 2],
+            rev_stage_rounds=[1, 2, 3],
+
+            py_rev_stage_keeps=[10, 3, 1],
+            py_rev_stage_rounds=[1, 2, 3],
+        ),
+        batch=BatchConfig(
+            mini_batch_init=10,
+            mini_batch_revisions=5,
+            mini_batch_py=5,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+
+
+    ---------------------------------------------------- feb 28 higher python revision lower english thinking 
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig( # low thinking!!
+            think_tokens=1000,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1000,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.15,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=15,
+            top_k=10,
+            n_individual_revisions=5,
+            n_pool_revisions=5,
+            py_n_candidates=5,
+            py_revision_steps=5,
+
+            rev_stage_keeps=[10, 5, 2],
+            rev_stage_rounds=[1, 2, 3],
+
+            py_rev_stage_keeps=[10, 3, 1],
+            py_rev_stage_rounds=[1, 2, 3],
+        ),
+        batch=BatchConfig(
+            mini_batch_init=10,
+            mini_batch_revisions=5,
+            mini_batch_py=5,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+
+        ################################################ 1 march 2nd data set
+
+        cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig( # low thinking!!
+            think_tokens=1400,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1000,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        python=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.75,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.3,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=20,
+            top_k=10,
+            n_individual_revisions=5,
+            n_pool_revisions=5,
+            py_n_candidates=5,
+            py_revision_steps=5,
+
+            rev_stage_keeps=[10, 5, 2],
+            rev_stage_rounds=[1, 2, 3],
+
+            py_rev_stage_keeps=[10, 3, 1],
+            py_rev_stage_rounds=[1, 2, 3],
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=5,
+            mini_batch_py=5,
+        ),
+        timeout=TimeoutConfig(
+            python_train_timeout_s=2.0,
+            python_test_timeout_s=2.0,
+        ),
+        pad_value=-1,
+
+    mar 8 5:54 job 280
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1500,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1500,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_compile=GenPhaseConfig(
+            think_tokens=4000,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2000,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=15,
+            n_pool_revisions=15,
+        ),
+        python=PythonConfig(
+            n_candidates=40,
+            top_k_revise=15,
+            n_revision_rounds=1,
+            timeout_s=2.5,
+            micro_batch_py=20,
+
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=15,
+            mini_batch_exec=20,
+        ),
+        pad_value=-1,
+
+
+    Mar 8 5:58 python depth 281
+
+    cfg = RunConfig(
+        instruction=GenPhaseConfig(
+            think_tokens=4096,
+            think_temp=1.4,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1400,
+            answer_temp=0.5,
+            answer_top_p=1.0,
+        ),
+        executor=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=0.7,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1500,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        pool=GenPhaseConfig(
+            think_tokens=2048,
+            think_temp=1,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=1500,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_compile=GenPhaseConfig(
+            think_tokens=4000,
+            think_temp=1.2,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        python_revision=GenPhaseConfig(
+            think_tokens=2000,
+            think_temp=0.8,
+            think_top_p=0.95,
+            think_top_k=20,
+            answer_tokens=2600,
+            answer_temp=0.2,
+            answer_top_p=1.0,
+        ),
+        search=SearchConfig(
+            n_init=40,
+            top_k=20,
+            n_individual_revisions=15,
+            n_pool_revisions=15,
+        ),
+        python=PythonConfig(
+            n_candidates=40,
+            top_k_revise=1,
+            n_revision_rounds=10,
+            timeout_s=2.5,
+            micro_batch_py=20,
+
+        ),
+        batch=BatchConfig(
+            mini_batch_init=20,
+            mini_batch_revisions=15,
+            mini_batch_exec=20,
+        ),
+        pad_value=-1,
+    )
